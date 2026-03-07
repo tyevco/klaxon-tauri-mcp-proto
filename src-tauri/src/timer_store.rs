@@ -1,8 +1,7 @@
-use std::{collections::HashMap, path::PathBuf};
-
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, Mutex};
+use sqlx::{Row, SqlitePool};
+use tokio::sync::broadcast;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimerEntry {
@@ -14,23 +13,9 @@ pub struct TimerEntry {
   pub note: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ActiveTimer {
-  issue_id: String,
-  start: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Persisted {
-  #[serde(default)]
-  active: HashMap<String, ActiveTimer>,
-  entries: Vec<TimerEntry>,
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub struct IssueSummary {
   pub issue_id: String,
-  /// Completed (stopped) seconds only. Client adds live elapsed via active_since.
   pub seconds: u64,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub active_since: Option<DateTime<Utc>>,
@@ -43,58 +28,76 @@ pub enum TimerEvent {
 
 #[derive(Debug)]
 pub struct TimerStore {
-  path: PathBuf,
-  inner: Mutex<Persisted>,
+  pool: SqlitePool,
   pub events: broadcast::Sender<TimerEvent>,
 }
 
 impl TimerStore {
-  pub async fn new(path: PathBuf) -> Self {
+  pub async fn new(pool: SqlitePool) -> Self {
     let (tx, _rx) = broadcast::channel(64);
-    let data = if let Ok(bytes) = tokio::fs::read(&path).await {
-      serde_json::from_slice::<Persisted>(&bytes)
-        .unwrap_or_else(|_| Persisted { active: HashMap::new(), entries: vec![] })
-    } else {
-      Persisted { active: HashMap::new(), entries: vec![] }
-    };
-    Self { path, inner: Mutex::new(data), events: tx }
-  }
-
-  async fn persist(&self, data: &Persisted) {
-    if let Ok(json) = serde_json::to_vec_pretty(data) {
-      let _ = tokio::fs::create_dir_all(
-        self.path.parent().unwrap_or_else(|| std::path::Path::new(".")),
-      )
-      .await;
-      let _ = tokio::fs::write(&self.path, json).await;
-    }
+    Self { pool, events: tx }
   }
 
   pub async fn start(&self, issue_id: String) -> Result<(), String> {
-    let mut data = self.inner.lock().await;
-    if data.active.contains_key(&issue_id) {
+    let existing = sqlx::query("SELECT issue_id FROM timer_active WHERE issue_id = ?")
+      .bind(&issue_id)
+      .fetch_optional(&self.pool)
+      .await
+      .map_err(|e| e.to_string())?;
+    if existing.is_some() {
       return Err(format!("{issue_id} is already running"));
     }
-    data.active.insert(issue_id.clone(), ActiveTimer { issue_id, start: Utc::now() });
-    self.persist(&data).await;
+    sqlx::query("INSERT INTO timer_active (issue_id, start) VALUES (?, ?)")
+      .bind(&issue_id)
+      .bind(Utc::now().to_rfc3339())
+      .execute(&self.pool)
+      .await
+      .map_err(|e| e.to_string())?;
     let _ = self.events.send(TimerEvent::Updated);
     Ok(())
   }
 
   pub async fn stop(&self, issue_id: &str) -> Option<TimerEntry> {
-    let mut data = self.inner.lock().await;
-    let active = data.active.remove(issue_id)?;
+    let row = sqlx::query("SELECT issue_id, start FROM timer_active WHERE issue_id = ?")
+      .bind(issue_id)
+      .fetch_optional(&self.pool)
+      .await
+      .ok()??;
+
+    let start_str: String = row.try_get("start").ok()?;
+    let start = chrono::DateTime::parse_from_rfc3339(&start_str)
+      .ok()?
+      .with_timezone(&Utc);
     let end = Utc::now();
-    let seconds = (end - active.start).num_seconds().max(0) as u64;
-    let entry = TimerEntry { issue_id: active.issue_id, start: active.start, end, seconds, note: None };
-    data.entries.push(entry.clone());
-    self.persist(&data).await;
+    let seconds = (end - start).num_seconds().max(0) as u64;
+    let date = start.format("%Y-%m-%d").to_string();
+
+    let _ = sqlx::query(
+      "INSERT INTO timer_entries (issue_id, start, end, seconds, date) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(issue_id)
+    .bind(start.to_rfc3339())
+    .bind(end.to_rfc3339())
+    .bind(seconds as i64)
+    .bind(&date)
+    .execute(&self.pool)
+    .await;
+
+    let _ = sqlx::query("DELETE FROM timer_active WHERE issue_id = ?")
+      .bind(issue_id)
+      .execute(&self.pool)
+      .await;
+
     let _ = self.events.send(TimerEvent::Updated);
-    Some(entry)
+    Some(TimerEntry { issue_id: issue_id.to_string(), start, end, seconds, note: None })
   }
 
   pub async fn stop_all(&self) -> Vec<TimerEntry> {
-    let ids: Vec<String> = self.inner.lock().await.active.keys().cloned().collect();
+    let rows = sqlx::query("SELECT issue_id FROM timer_active")
+      .fetch_all(&self.pool)
+      .await
+      .unwrap_or_default();
+    let ids: Vec<String> = rows.iter().filter_map(|r| r.try_get("issue_id").ok()).collect();
     let mut out = Vec::new();
     for id in ids {
       if let Some(e) = self.stop(&id).await {
@@ -104,7 +107,6 @@ impl TimerStore {
     out
   }
 
-  /// Stop all active timers then start a new one (MCP switch semantics).
   pub async fn switch(&self, issue_id: String) -> Vec<TimerEntry> {
     let stopped = self.stop_all().await;
     let _ = self.start(issue_id).await;
@@ -112,71 +114,100 @@ impl TimerStore {
   }
 
   pub async fn today_summary(&self) -> Vec<IssueSummary> {
-    let data = self.inner.lock().await;
-    let today = Utc::now().date_naive();
-    let mut completed: HashMap<String, u64> = HashMap::new();
+    let today = Utc::now().format("%Y-%m-%d").to_string();
 
-    for entry in &data.entries {
-      if entry.start.date_naive() == today {
-        *completed.entry(entry.issue_id.clone()).or_insert(0) += entry.seconds;
-      }
-    }
+    let completed_rows = sqlx::query(
+      "SELECT issue_id, SUM(seconds) as total_seconds FROM timer_entries WHERE date = ? GROUP BY issue_id",
+    )
+    .bind(&today)
+    .fetch_all(&self.pool)
+    .await
+    .unwrap_or_default();
 
-    // Build rows from completed entries, merging active_since where applicable.
-    let mut out: Vec<IssueSummary> = completed
-      .into_iter()
-      .map(|(issue_id, seconds)| {
-        let active_since = data.active.get(&issue_id).map(|a| a.start);
-        IssueSummary { issue_id, seconds, active_since }
+    let active_rows = sqlx::query("SELECT issue_id, start FROM timer_active")
+      .fetch_all(&self.pool)
+      .await
+      .unwrap_or_default();
+
+    let mut summaries: Vec<IssueSummary> = completed_rows
+      .iter()
+      .filter_map(|r| {
+        let issue_id: String = r.try_get("issue_id").ok()?;
+        let total: i64 = r.try_get("total_seconds").ok()?;
+        Some(IssueSummary { issue_id, seconds: total as u64, active_since: None })
       })
       .collect();
 
-    // Add active timers that have no completed entries today yet.
-    for (issue_id, active) in &data.active {
-      if !out.iter().any(|s| &s.issue_id == issue_id) {
-        out.push(IssueSummary { issue_id: issue_id.clone(), seconds: 0, active_since: Some(active.start) });
+    // Merge active_since into existing entries or add new rows
+    for row in &active_rows {
+      let Ok(issue_id): Result<String, _> = row.try_get("issue_id") else { continue };
+      let Ok(start_str): Result<String, _> = row.try_get("start") else { continue };
+      let active_since = chrono::DateTime::parse_from_rfc3339(&start_str)
+        .ok()
+        .map(|d| d.with_timezone(&Utc));
+
+      if let Some(s) = summaries.iter_mut().find(|s| s.issue_id == issue_id) {
+        s.active_since = active_since;
+      } else {
+        summaries.push(IssueSummary { issue_id, seconds: 0, active_since });
       }
     }
 
-    // Active entries first, then by most completed seconds.
-    out.sort_by(|a, b| {
-      b.active_since.is_some().cmp(&a.active_since.is_some())
-        .then(b.seconds.cmp(&a.seconds))
+    summaries.sort_by(|a, b| {
+      b.active_since.is_some().cmp(&a.active_since.is_some()).then(b.seconds.cmp(&a.seconds))
     });
-    out
+    summaries
   }
 
   pub async fn active_state(&self) -> Vec<(String, DateTime<Utc>)> {
-    let data = self.inner.lock().await;
-    data.active.values().map(|a| (a.issue_id.clone(), a.start)).collect()
+    let rows = sqlx::query("SELECT issue_id, start FROM timer_active")
+      .fetch_all(&self.pool)
+      .await
+      .unwrap_or_default();
+    rows.iter()
+      .filter_map(|r| {
+        let issue_id: String = r.try_get("issue_id").ok()?;
+        let start_str: String = r.try_get("start").ok()?;
+        let start =
+          chrono::DateTime::parse_from_rfc3339(&start_str).ok()?.with_timezone(&Utc);
+        Some((issue_id, start))
+      })
+      .collect()
   }
 
   pub async fn seed_demo(&self) {
     let now = Utc::now();
-    let today = now.date_naive();
-    let mut inner = self.inner.lock().await;
+    let today = now.format("%Y-%m-%d").to_string();
 
-    inner.entries.push(TimerEntry {
-      issue_id: "PROJ-456".into(),
-      start: today.and_hms_opt(9, 0, 0).unwrap().and_utc(),
-      end:   today.and_hms_opt(11, 18, 0).unwrap().and_utc(),
-      seconds: 8280,
-      note: None,
-    });
-    inner.entries.push(TimerEntry {
-      issue_id: "PROJ-789".into(),
-      start: today.and_hms_opt(13, 0, 0).unwrap().and_utc(),
-      end:   today.and_hms_opt(13, 45, 0).unwrap().and_utc(),
-      seconds: 2700,
-      note: None,
-    });
+    let entries = [
+      ("PROJ-456", "09:00:00", "11:18:00", 8280i64),
+      ("PROJ-789", "13:00:00", "13:45:00", 2700i64),
+    ];
 
-    inner.active.insert("PROJ-001".into(), ActiveTimer {
-      issue_id: "PROJ-001".into(),
-      start: now - Duration::minutes(3),
-    });
+    for (issue_id, start_time, end_time, seconds) in &entries {
+      let start_str = format!("{today}T{start_time}Z");
+      let end_str = format!("{today}T{end_time}Z");
+      let _ = sqlx::query(
+        "INSERT INTO timer_entries (issue_id, start, end, seconds, date) VALUES (?, ?, ?, ?, ?)",
+      )
+      .bind(issue_id)
+      .bind(&start_str)
+      .bind(&end_str)
+      .bind(seconds)
+      .bind(&today)
+      .execute(&self.pool)
+      .await;
+    }
 
-    self.persist(&inner).await;
+    let active_start = (now - Duration::minutes(3)).to_rfc3339();
+    let _ = sqlx::query(
+      "INSERT OR REPLACE INTO timer_active (issue_id, start) VALUES (?, ?)",
+    )
+    .bind("PROJ-001")
+    .bind(&active_start)
+    .execute(&self.pool)
+    .await;
+
     let _ = self.events.send(TimerEvent::Updated);
   }
 }

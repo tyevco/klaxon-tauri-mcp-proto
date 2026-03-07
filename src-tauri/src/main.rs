@@ -2,6 +2,7 @@
 
 mod mcp_http;
 mod models;
+mod settings_store;
 mod store;
 mod timer_store;
 mod token_store;
@@ -9,18 +10,27 @@ mod token_store;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use tauri::{Emitter, Manager};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState};
+use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::{
   mcp_http::start_mcp_server,
   models::{KlaxonLevel, KlaxonStatus},
+  settings_store::{AppSettings, SettingsStore},
   store::{KlaxonStore, StoreEvent},
   timer_store::{TimerStore, TimerEvent},
   token_store::{TokenStore, TokenEvent, TokenDelta},
 };
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct McpStatus {
+  url: String,
+  bearer: String,
+}
 
 #[tauri::command]
 async fn klaxon_list_open(state: tauri::State<'_, Arc<KlaxonStore>>) -> Result<Vec<crate::models::KlaxonItem>, String> {
@@ -102,7 +112,6 @@ async fn demo_seed_inner(
 ) {
   use crate::models::{KlaxonAction, KlaxonForm, KlaxonLevel, FormField};
 
-  // 1. Info with RunTool + Ack actions
   let item = store.notify(
     KlaxonLevel::Info,
     "Agent Status".into(),
@@ -114,7 +123,6 @@ async fn demo_seed_inner(
     KlaxonAction::Ack    { id: "ack".into(), label: "Got it".into() },
   ]).await;
 
-  // 2. Warning with Ack
   store.notify(
     KlaxonLevel::Warning,
     "Context Window at 87%".into(),
@@ -122,7 +130,6 @@ async fn demo_seed_inner(
     Some(120_000),
   ).await;
 
-  // 3. Error with OpenUrl + Ack
   let item = store.notify(
     KlaxonLevel::Error,
     "Build Failed".into(),
@@ -134,7 +141,6 @@ async fn demo_seed_inner(
     KlaxonAction::Ack    { id: "ack".into(),  label: "Dismiss".into() },
   ]).await;
 
-  // 4. Ask with a DiffApproval form field
   store.ask(
     KlaxonLevel::Info,
     "Approve Code Change".into(),
@@ -159,10 +165,8 @@ async fn demo_seed_inner(
     None,
   ).await;
 
-  // Timer
   timer.seed_demo().await;
 
-  // Tokens
   tokens.add(TokenDelta { model: "claude-opus-4-6".into(),   input_tokens: 12_840,  output_tokens: 2_460,  cost_usd: Some(1.89), source: Some("demo".into()) }).await;
   tokens.add(TokenDelta { model: "claude-sonnet-4-6".into(), input_tokens: 52_300,  output_tokens: 11_200, cost_usd: Some(0.55), source: Some("demo".into()) }).await;
   tokens.add(TokenDelta { model: "claude-haiku-4-5".into(),  input_tokens: 145_000, output_tokens: 31_000, cost_usd: Some(0.10), source: Some("demo".into()) }).await;
@@ -234,6 +238,29 @@ async fn tokens_add(state: tauri::State<'_, Arc<TokenStore>>, delta: TokenDelta)
 }
 
 #[tauri::command]
+async fn settings_get(state: tauri::State<'_, Arc<SettingsStore>>) -> Result<AppSettings, String> {
+  Ok(state.get().await)
+}
+
+#[tauri::command]
+async fn settings_set(
+  state: tauri::State<'_, Arc<SettingsStore>>,
+  app: tauri::AppHandle,
+  settings: AppSettings,
+) -> Result<(), String> {
+  state.set(&settings).await;
+  let _ = app.emit("settings.changed", &settings);
+  Ok(())
+}
+
+#[tauri::command]
+async fn mcp_get_status(
+  state: tauri::State<'_, Arc<Mutex<Option<McpStatus>>>>,
+) -> Result<Option<McpStatus>, String> {
+  Ok(state.lock().await.clone())
+}
+
+#[tauri::command]
 fn start_panel_drag(window: tauri::WebviewWindow) -> Result<(), String> {
   window.start_dragging().map_err(|e| e.to_string())
 }
@@ -286,11 +313,42 @@ fn main() {
       let data_dir = app.handle().path().app_data_dir()
         .unwrap_or_else(|_| std::path::PathBuf::from("."));
 
-      // --- KlaxonStore ---
-      let store_path = data_dir.join("klaxon_store.json");
-      let store = tauri::async_runtime::block_on(async { Arc::new(KlaxonStore::new(store_path).await) });
+      // --- SQLite pool + migrations ---
+      let db_path = data_dir.join("klaxon.db");
+      let pool = tauri::async_runtime::block_on(async {
+        let options = SqliteConnectOptions::new()
+          .filename(&db_path)
+          .create_if_missing(true);
+        let pool = SqlitePoolOptions::new()
+          .max_connections(5)
+          .connect_with(options)
+          .await
+          .expect("failed to open SQLite DB");
+        sqlx::migrate!("./migrations")
+          .run(&pool)
+          .await
+          .expect("DB migration failed");
+        Arc::new(pool)
+      });
+
+      // --- Stores ---
+      let store = Arc::new(tauri::async_runtime::block_on(KlaxonStore::new((*pool).clone())));
       app.manage(store.clone());
 
+      let timer_store = Arc::new(tauri::async_runtime::block_on(TimerStore::new((*pool).clone())));
+      app.manage(timer_store.clone());
+
+      let token_store = Arc::new(tauri::async_runtime::block_on(TokenStore::new((*pool).clone())));
+      app.manage(token_store.clone());
+
+      let settings_store = Arc::new(tauri::async_runtime::block_on(SettingsStore::new((*pool).clone())));
+      app.manage(settings_store.clone());
+
+      // --- MCP status state ---
+      let mcp_status: Arc<Mutex<Option<McpStatus>>> = Arc::new(Mutex::new(None));
+      app.manage(mcp_status.clone());
+
+      // --- KlaxonStore event bridge ---
       let initial_count = tauri::async_runtime::block_on(async { store.list_open().await.len() });
       let open_count = Arc::new(AtomicUsize::new(initial_count));
 
@@ -326,11 +384,7 @@ fn main() {
         }
       });
 
-      // --- TimerStore ---
-      let timer_path = data_dir.join("timer_store.json");
-      let timer_store = tauri::async_runtime::block_on(async { Arc::new(TimerStore::new(timer_path).await) });
-      app.manage(timer_store.clone());
-
+      // --- TimerStore event bridge ---
       let app_handle = app.handle().clone();
       let mut rx = timer_store.events.subscribe();
       tauri::async_runtime::spawn(async move {
@@ -343,11 +397,7 @@ fn main() {
         }
       });
 
-      // --- TokenStore ---
-      let token_path = data_dir.join("token_store.json");
-      let token_store = tauri::async_runtime::block_on(async { Arc::new(TokenStore::new(token_path).await) });
-      app.manage(token_store.clone());
-
+      // --- TokenStore event bridge ---
       let app_handle = app.handle().clone();
       let mut rx = token_store.events.subscribe();
       tauri::async_runtime::spawn(async move {
@@ -362,9 +412,10 @@ fn main() {
 
       // --- Panel windows ---
       let panels: &[(&str, f64, f64, f64, f64)] = &[
-        ("klaxon", 400.0, 560.0, 24.0, 24.0),
-        ("timer",  320.0, 380.0, 440.0, 24.0),
-        ("tokens", 300.0, 280.0, 780.0, 24.0),
+        ("klaxon",   400.0, 560.0, 24.0,   24.0),
+        ("timer",    320.0, 380.0, 440.0,  24.0),
+        ("tokens",   300.0, 280.0, 780.0,  24.0),
+        ("settings", 340.0, 420.0, 1100.0, 24.0),
       ];
       for &(label, w, h, dx, dy) in panels {
         let url = tauri::WebviewUrl::App(format!("?panel={label}").into());
@@ -383,8 +434,11 @@ fn main() {
 
       // --- MCP Server ---
       let app_handle = app.handle().clone();
+      let preferred_port = tauri::async_runtime::block_on(async {
+        settings_store.get().await.mcp_preferred_port
+      });
       tauri::async_runtime::spawn(async move {
-        let (addr, bearer) = match start_mcp_server(store.clone(), timer_store.clone(), token_store.clone(), 0).await {
+        let (addr, bearer) = match start_mcp_server(store.clone(), timer_store.clone(), token_store.clone(), preferred_port).await {
           Ok(v) => v,
           Err(e) => {
             eprintln!("Failed to start MCP server: {e:?}");
@@ -395,23 +449,25 @@ fn main() {
         eprintln!("MCP server listening at http://{}/mcp", addr);
         eprintln!("MCP bearer token: {}", bearer);
 
+        let url = format!("http://{}/mcp", addr);
+        *mcp_status.lock().await = Some(McpStatus { url: url.clone(), bearer: bearer.clone() });
+
         let _ = store
           .notify(
             KlaxonLevel::Info,
             "Klaxon ready".to_string(),
-            format!("MCP: http://{}/mcp\nToken: {}", addr, bearer),
+            format!("MCP: {url}\nToken: {bearer}"),
             None,
           )
           .await;
 
         let _ = app_handle.emit(
           "mcp.ready",
-          &serde_json::json!({"url": format!("http://{}/mcp", addr), "token": bearer}),
+          &serde_json::json!({"url": url, "token": bearer}),
         );
       });
 
       // --- Panel popup menu event routing ---
-      // Events arrive as "pm:<label>:<action>" — emit back to the correct window.
       app.handle().on_menu_event(|app, event| {
         let id = event.id().as_ref();
         if let Some(rest) = id.strip_prefix("pm:") {
@@ -425,15 +481,16 @@ fn main() {
       });
 
       // --- System Tray ---
-      let klaxon_item = MenuItem::with_id(app.handle(), "toggle-klaxon", "Klaxon",   true, None::<&str>)?;
-      let timer_item  = MenuItem::with_id(app.handle(), "toggle-timer",  "Timer",    true, None::<&str>)?;
-      let tokens_item = MenuItem::with_id(app.handle(), "toggle-tokens", "Tokens",   true, None::<&str>)?;
-      let demo_item   = MenuItem::with_id(app.handle(), "demo-seed",     "Run Demo", true, None::<&str>)?;
-      let quit_item   = MenuItem::with_id(app.handle(), "quit",          "Quit",     true, None::<&str>)?;
+      let klaxon_item   = MenuItem::with_id(app.handle(), "toggle-klaxon",   "Klaxon",   true, None::<&str>)?;
+      let timer_item    = MenuItem::with_id(app.handle(), "toggle-timer",    "Timer",    true, None::<&str>)?;
+      let tokens_item   = MenuItem::with_id(app.handle(), "toggle-tokens",   "Tokens",   true, None::<&str>)?;
+      let settings_item = MenuItem::with_id(app.handle(), "toggle-settings", "Settings", true, None::<&str>)?;
+      let demo_item     = MenuItem::with_id(app.handle(), "demo-seed",       "Run Demo", true, None::<&str>)?;
+      let quit_item     = MenuItem::with_id(app.handle(), "quit",            "Quit",     true, None::<&str>)?;
       let sep1 = PredefinedMenuItem::separator(app.handle())?;
       let sep2 = PredefinedMenuItem::separator(app.handle())?;
       let tray_menu = Menu::with_items(app.handle(), &[
-        &klaxon_item, &timer_item, &tokens_item,
+        &klaxon_item, &timer_item, &tokens_item, &settings_item,
         &sep1, &demo_item, &sep2,
         &quit_item,
       ])?;
@@ -454,9 +511,10 @@ fn main() {
         .menu(&tray_menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
-          "toggle-klaxon" => toggle_panel(app, "klaxon"),
-          "toggle-timer"  => toggle_panel(app, "timer"),
-          "toggle-tokens" => toggle_panel(app, "tokens"),
+          "toggle-klaxon"   => toggle_panel(app, "klaxon"),
+          "toggle-timer"    => toggle_panel(app, "timer"),
+          "toggle-tokens"   => toggle_panel(app, "tokens"),
+          "toggle-settings" => toggle_panel(app, "settings"),
           "demo-seed" => {
             let store  = app.state::<Arc<KlaxonStore>>().inner().clone();
             let timer  = app.state::<Arc<TimerStore>>().inner().clone();
@@ -496,6 +554,9 @@ fn main() {
       timer_active,
       tokens_today,
       tokens_add,
+      settings_get,
+      settings_set,
+      mcp_get_status,
       start_panel_drag,
       set_panel_always_on_top,
       hide_panel,
