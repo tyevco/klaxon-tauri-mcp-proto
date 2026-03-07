@@ -1,0 +1,23 @@
+:root{
+  --bg: rgba(20, 20, 24, 0.88);
+  --card: rgba(32, 32, 38, 0.92);
+  --border: rgba(255, 255, 255, 0.12);
+  --text: rgba(255, 255, 255, 0.92);
+  --muted: rgba(255, 255, 255, 0.65);
+  --danger: #ff4d4d;
+  --warn: #ffcc00;
+  --info: #5aa9ff;
+  --ok: #3ddc97;
+}
+html,body{ margin:0; padding:0; background: transparent; color:var(--text); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; overflow: hidden; }
+*{ -webkit-user-select: none; user-select: none; }
+input, textarea, [contenteditable]{ -webkit-user-select: text; user-select: text; }
+a{ color: var(--info); }
+button{ cursor:pointer; }
+.klaxon-md p { margin: 0 0 4px; }
+.klaxon-md p:last-child { margin-bottom: 0; }
+.klaxon-md code { background: rgba(255,255,255,0.1); border-radius: 4px; padding: 1px 5px; font-size: 0.9em; font-family: ui-monospace, monospace; }
+.klaxon-md pre { background: rgba(0,0,0,0.25); border-radius: 6px; padding: 8px 10px; overflow-x: auto; }
+.klaxon-md pre code { background: none; padding: 0; }
+.klaxon-md ul, .klaxon-md ol { margin: 2px 0 4px; padding-left: 18px; }
+.klaxon-md li { margin: 1px 0; }

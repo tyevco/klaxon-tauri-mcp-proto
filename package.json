@@ -1,0 +1,23 @@
+{
+  "name": "klaxon-root",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.0.0",
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @klaxon/ui dev",
+    "build": "pnpm --filter @klaxon/protocol build && pnpm --filter @klaxon/ui build",
+    "tauri": "tauri",
+    "start": "pnpm --filter @klaxon/protocol build && pnpm tauri dev",
+    "tauri:dev": "pnpm --filter @klaxon/ui dev -- --port 1420 & tauri dev",
+    "typecheck": "pnpm --filter @klaxon/protocol build && pnpm -r typecheck",
+    "check": "pnpm --filter @klaxon/protocol build && pnpm -r typecheck && cargo check --manifest-path src-tauri/Cargo.toml",
+    "test:ts": "pnpm --filter @klaxon/protocol build && pnpm -r --filter @klaxon/protocol --filter @klaxon/ui test",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "test": "pnpm test:ts && pnpm test:rust",
+    "ci": "pnpm check && pnpm test",
+    "lint": "pnpm -r lint"
+  }
+}
