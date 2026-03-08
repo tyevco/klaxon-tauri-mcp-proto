@@ -11,6 +11,9 @@ vi.mock("../widgets/TimerWidget", () => ({
 vi.mock("../widgets/TokenWidget", () => ({
   TokenWidget: () => <div data-testid="token-widget" />,
 }));
+vi.mock("../widgets/FormWidget", () => ({
+  FormWidget: () => <div data-testid="form-widget" />,
+}));
 
 beforeEach(() => {
   Object.defineProperty(window, "location", {
@@ -42,6 +45,12 @@ describe("App panel routing", () => {
     window.location = { search: "?panel=tokens" } as any;
     render(<App />);
     expect(screen.getByTestId("token-widget")).toBeInTheDocument();
+  });
+
+  it("?panel=form renders FormWidget", () => {
+    window.location = { search: "?panel=form" } as any;
+    render(<App />);
+    expect(screen.getByTestId("form-widget")).toBeInTheDocument();
   });
 
   it("?panel=unknown falls back to KlaxonWidget", () => {

@@ -55,6 +55,9 @@ fn default_approve_label() -> String {
 fn default_reject_label() -> String {
   "Reject".into()
 }
+fn default_slider_step() -> f64 {
+  1.0
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -181,6 +184,51 @@ pub enum FormField {
     #[serde(default)]
     required: bool,
   },
+  Slider {
+    id: String,
+    label: String,
+    min: f64,
+    max: f64,
+    #[serde(default = "default_slider_step")]
+    step: f64,
+    #[serde(default)]
+    default: Option<f64>,
+    #[serde(default)]
+    required: bool,
+  },
+  Markdown {
+    id: String,
+    content: String,
+  },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FormBranch {
+  pub value: String,
+  pub page_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FormPageNext {
+  End,
+  Fixed { page_id: String },
+  Conditional {
+    field_id: String,
+    branches: Vec<FormBranch>,
+    #[serde(default)]
+    default: Option<String>,
+  },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FormPage {
+  pub id: String,
+  #[serde(default)]
+  pub title: Option<String>,
+  pub fields: Vec<FormField>,
+  #[serde(default)]
+  pub next: Option<FormPageNext>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -190,6 +238,8 @@ pub struct KlaxonForm {
   #[serde(default)]
   pub description: String,
   pub fields: Vec<FormField>,
+  #[serde(default)]
+  pub pages: Vec<FormPage>,
   #[serde(default)]
   pub submit_label: Option<String>,
   #[serde(default)]

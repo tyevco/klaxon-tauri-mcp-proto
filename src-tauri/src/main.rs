@@ -105,6 +105,25 @@ async fn klaxon_answer(
   Ok(())
 }
 
+#[tauri::command]
+async fn klaxon_get_item(
+  state: tauri::State<'_, Arc<KlaxonStore>>,
+  id: String,
+) -> Result<Option<crate::models::KlaxonItem>, String> {
+  let uuid = Uuid::parse_str(&id).map_err(|_| "invalid id".to_string())?;
+  Ok(state.get_item(uuid).await)
+}
+
+#[tauri::command]
+fn klaxon_open_form(app: tauri::AppHandle, id: String) -> Result<(), String> {
+  let win = app.get_webview_window("form")
+    .ok_or_else(|| "form window not found".to_string())?;
+  win.emit("form.open", &serde_json::json!({ "id": id }))
+    .map_err(|e| e.to_string())?;
+  win.show().map_err(|e| e.to_string())?;
+  win.set_focus().map_err(|e| e.to_string())
+}
+
 async fn demo_seed_inner(
   store: Arc<KlaxonStore>,
   timer: Arc<TimerStore>,
@@ -159,6 +178,7 @@ async fn demo_seed_inner(
           required: true,
         },
       ],
+      pages: vec![],
       submit_label: Some("Submit".into()),
       cancel_label: Some("Cancel".into()),
     },
@@ -377,6 +397,9 @@ fn main() {
                 "klaxon.answered",
                 &serde_json::json!({"id": id.to_string(), "response": response}),
               );
+              if let Some(win) = app_handle.get_webview_window("form") {
+                let _ = win.hide();
+              }
             }
             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
             Err(_) => break,
@@ -416,6 +439,7 @@ fn main() {
         ("timer",    320.0, 380.0, 440.0,  24.0),
         ("tokens",   300.0, 280.0, 780.0,  24.0),
         ("settings", 340.0, 420.0, 1100.0, 24.0),
+        ("form",     480.0, 600.0, 200.0,  100.0),
       ];
       for &(label, w, h, dx, dy) in panels {
         let url = tauri::WebviewUrl::App(format!("?panel={label}").into());
@@ -430,6 +454,9 @@ fn main() {
           .skip_taskbar(true)
           .visible_on_all_workspaces(true)
           .build()?;
+      }
+      if let Some(win) = app.get_webview_window("form") {
+        let _ = win.hide();
       }
 
       // --- MCP Server ---
@@ -545,6 +572,8 @@ fn main() {
       klaxon_dismiss,
       klaxon_answer,
       klaxon_run_action,
+      klaxon_get_item,
+      klaxon_open_form,
       klaxon_demo_create,
       demo_seed,
       timer_start,

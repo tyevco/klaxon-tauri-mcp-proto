@@ -5,6 +5,7 @@ import { KlaxonWidget } from "./widgets/KlaxonWidget";
 import { TimerWidget } from "./widgets/TimerWidget";
 import { TokenWidget } from "./widgets/TokenWidget";
 import { SettingsWidget } from "./widgets/SettingsWidget";
+import { FormWidget } from "./widgets/FormWidget";
 
 interface AppSettings {
   theme: string;
@@ -27,5 +28,6 @@ export function App() {
   if (panel === "timer") return <TimerWidget />;
   if (panel === "tokens") return <TokenWidget />;
   if (panel === "settings") return <SettingsWidget />;
+  if (panel === "form") return <FormWidget />;
   return <KlaxonWidget />;
 }

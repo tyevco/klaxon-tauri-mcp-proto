@@ -106,15 +106,64 @@ export const FormFieldSchema = z.discriminatedUnion("type", [
     summary: z.string().optional(),
     diff: z.string().optional(),
   }),
+  z.object({
+    type: z.literal("rating"),
+    id: z.string(),
+    label: z.string(),
+    required: z.boolean().optional(),
+    min: z.number().int().default(1),
+    max: z.number().int().default(5),
+    default: z.number().int().optional(),
+  }),
+  z.object({
+    type: z.literal("slider"),
+    id: z.string(),
+    label: z.string(),
+    required: z.boolean().optional(),
+    min: z.number(),
+    max: z.number(),
+    step: z.number().default(1),
+    default: z.number().optional(),
+  }),
+  z.object({
+    type: z.literal("markdown"),
+    id: z.string(),
+    label: z.string().optional().default(""),
+    content: z.string(),
+  }),
 ]);
 
 export type FormField = z.infer<typeof FormFieldSchema>;
+
+export const FormBranchSchema = z.object({ value: z.string(), page_id: z.string() });
+
+export const FormPageNextSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("end") }),
+  z.object({ kind: z.literal("fixed"), page_id: z.string() }),
+  z.object({
+    kind: z.literal("conditional"),
+    field_id: z.string(),
+    branches: z.array(FormBranchSchema),
+    default: z.string().optional(),
+  }),
+]);
+
+export const FormPageSchema = z.object({
+  id: z.string(),
+  title: z.string().optional(),
+  fields: z.array(FormFieldSchema).default([]),
+  next: FormPageNextSchema.optional(),
+});
+
+export type FormPage = z.infer<typeof FormPageSchema>;
+export type FormPageNext = z.infer<typeof FormPageNextSchema>;
 
 export const FormSchemaSchema = z.object({
   id: z.string(),
   title: z.string().optional(),
   description: z.string().optional(),
   fields: z.array(FormFieldSchema).default([]),
+  pages: z.array(FormPageSchema).default([]),
   submitLabel: z.string().optional(),
   cancelLabel: z.string().optional(),
 });

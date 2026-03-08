@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { KlaxonItem, KlaxonItemSchema, FormSchema, FormField } from "@klaxon/protocol";
+import { KlaxonItem, KlaxonItemSchema } from "@klaxon/protocol";
 import { DraggablePanel } from "../components/DraggablePanel";
 
 function badgeColor(level: string) {
@@ -67,10 +67,6 @@ export function KlaxonWidget() {
 }
 
 function KlaxonCard({ item, onChanged }: { item: KlaxonItem; onChanged: () => void }) {
-  const [values, setValues] = useState<Record<string, any>>({});
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const form = item.form ?? null;
-
   async function ack() {
     await invoke("klaxon_ack", { id: item.id });
     onChanged();
@@ -83,48 +79,6 @@ function KlaxonCard({ item, onChanged }: { item: KlaxonItem; onChanged: () => vo
 
   async function runAction(actionId: string) {
     await invoke("klaxon_run_action", { id: item.id, actionId });
-    onChanged();
-  }
-
-  function validateField(f: FormField, v: any): string | null {
-    if (f.required && (v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0))) {
-      return "Required";
-    }
-    if (f.type === "text" || f.type === "textarea") {
-      if (typeof v === "string") {
-        if (f.min_len !== undefined && v.length < f.min_len) return `Min length ${f.min_len}`;
-        if (f.max_len !== undefined && v.length > f.max_len) return `Max length ${f.max_len}`;
-        if (f.pattern) {
-          try {
-            const r = new RegExp(f.pattern);
-            if (!r.test(v)) return "Does not match pattern";
-          } catch {
-            // ignore bad pattern
-          }
-        }
-      }
-    }
-    if (f.type === "number") {
-      const n = Number(v);
-      if (!Number.isFinite(n)) return "Must be a number";
-      if (f.min !== undefined && n < f.min) return `Min ${f.min}`;
-      if (f.max !== undefined && n > f.max) return `Max ${f.max}`;
-    }
-    return null;
-  }
-
-  async function submit() {
-    if (!form) return;
-
-    const nextErrors: Record<string, string> = {};
-    for (const f of form.fields) {
-      const err = validateField(f, values[f.id]);
-      if (err) nextErrors[f.id] = err;
-    }
-    setErrors(nextErrors);
-    if (Object.keys(nextErrors).length > 0) return;
-
-    await invoke("klaxon_answer", { id: item.id, response: values });
     onChanged();
   }
 
@@ -158,16 +112,16 @@ function KlaxonCard({ item, onChanged }: { item: KlaxonItem; onChanged: () => vo
         </div>
       ) : null}
 
-      {form ? (
-        <div style={{ marginTop: 12 }}>
-          <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 8 }}>{form.description ?? "Question"}</div>
-          <FormRenderer form={form} values={values} errors={errors} onChange={setValues} />
-          <div style={{ display:"flex", gap:8, marginTop: 10 }}>
-            <button onClick={submit} style={primaryBtnStyle()}>{form.submitLabel ?? "Submit"}</button>
-            <button onClick={() => dismiss()} style={btnStyle()}>{form.cancelLabel ?? "Cancel"}</button>
-          </div>
+      {item.form && item.status === "open" && (
+        <div style={{ marginTop: 10 }}>
+          <button onClick={() => invoke("klaxon_open_form", { id: item.id })} style={primaryBtnStyle()}>
+            Open Form
+          </button>
         </div>
-      ) : null}
+      )}
+      {item.form && item.status === "answered" && (
+        <div style={{ marginTop: 8, fontSize: 12, opacity: 0.6 }}>Answered</div>
+      )}
       {item.ttl_ms && <TtlBar createdAt={item.created_at} ttlMs={item.ttl_ms} />}
     </div>
   );
@@ -192,167 +146,6 @@ function primaryBtnStyle(): React.CSSProperties {
     padding:"6px 10px",
     fontSize: 12,
   };
-}
-
-function FormRenderer({ form, values, errors, onChange }:{
-  form: FormSchema;
-  values: Record<string, any>;
-  errors: Record<string, string>;
-  onChange: (v: Record<string, any>) => void;
-}) {
-  return (
-    <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-      {form.fields.map(f => (
-        <Field key={f.id} field={f} value={values[f.id]} error={errors[f.id]} onChange={(v) => onChange({ ...values, [f.id]: v })} />
-      ))}
-    </div>
-  );
-}
-
-function Field({ field, value, error, onChange }:{
-  field: FormField;
-  value: any;
-  error?: string;
-  onChange: (v: any) => void;
-}) {
-  const label = (
-    <div style={{ display:"flex", alignItems:"baseline", justifyContent:"space-between" }}>
-      <div style={{ fontSize: 12, fontWeight: 650, opacity: 0.95 }}>
-        {field.label}{field.required ? <span style={{ color:"var(--warn)" }}> *</span> : null}
-      </div>
-      {error ? <div style={{ fontSize: 11, color:"var(--danger)" }}>{error}</div> : null}
-    </div>
-  );
-
-  const commonInput: React.CSSProperties = {
-    width: "100%",
-    borderRadius: 10,
-    border: "1px solid var(--border)",
-    background: "rgba(0,0,0,0.18)",
-    color: "var(--text)",
-    padding: "8px 10px",
-    fontSize: 13,
-    boxSizing: "border-box",
-  };
-
-  switch (field.type) {
-    case "text":
-      return (
-        <div>
-          {label}
-          <input style={commonInput} value={value ?? ""} placeholder={field.placeholder ?? ""} onChange={e => onChange(e.target.value)} />
-        </div>
-      );
-    case "textarea":
-      return (
-        <div>
-          {label}
-          <textarea style={{...commonInput, minHeight: 72}} value={value ?? ""} placeholder={field.placeholder ?? ""} onChange={e => onChange(e.target.value)} />
-        </div>
-      );
-    case "number":
-      return (
-        <div>
-          {label}
-          <input style={commonInput} type="number" value={value ?? ""} onChange={e => onChange(e.target.value)} />
-        </div>
-      );
-    case "select":
-      return (
-        <div>
-          {label}
-          <select style={commonInput} value={value ?? ""} onChange={e => onChange(e.target.value)}>
-            <option value="" disabled>Select…</option>
-            {field.options?.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-        </div>
-      );
-    case "multiselect":
-      return (
-        <div>
-          {label}
-          <select style={commonInput} multiple value={Array.isArray(value) ? value : []} onChange={e => {
-            const selected = Array.from(e.target.selectedOptions).map(o => o.value);
-            onChange(selected);
-          }}>
-            {field.options?.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-        </div>
-      );
-    case "radio":
-      return (
-        <div>
-          {label}
-          <div style={{ display:"flex", flexDirection:"column", gap:6, marginTop: 6 }}>
-            {field.options?.map(o => (
-              <label key={o.value} style={{ display:"flex", gap:8, alignItems:"center", fontSize: 13, opacity: 0.9 }}>
-                <input type="radio" name={field.id} checked={value === o.value} onChange={() => onChange(o.value)} />
-                {o.label}
-              </label>
-            ))}
-          </div>
-        </div>
-      );
-    case "checkbox":
-      return (
-        <div>
-          {label}
-          <label style={{ display:"flex", gap:8, alignItems:"center", marginTop: 6, fontSize: 13, opacity: 0.9 }}>
-            <input type="checkbox" checked={!!value} onChange={e => onChange(e.target.checked)} />
-            {field.help ?? "Enabled"}
-          </label>
-        </div>
-      );
-    case "toggle":
-      return (
-        <div>
-          {label}
-          <label style={{ display:"flex", gap:8, alignItems:"center", marginTop: 6, fontSize: 13, opacity: 0.9 }}>
-            <input type="checkbox" checked={!!value} onChange={e => onChange(e.target.checked)} />
-            {field.help ?? (value ? "On" : "Off")}
-          </label>
-        </div>
-      );
-    case "datetime":
-      return (
-        <div>
-          {label}
-          <input style={commonInput} type="datetime-local" value={value ?? ""} onChange={e => onChange(e.target.value)} />
-        </div>
-      );
-    case "issuepicker":
-      return (
-        <div>
-          {label}
-          <input style={commonInput} list={`${field.id}-issues`} value={value ?? ""} placeholder={field.placeholder ?? "PROJ-123"} onChange={e => onChange(e.target.value)} />
-          <datalist id={`${field.id}-issues`}>
-            {(field.suggestions ?? []).map(s => <option key={s} value={s} />)}
-          </datalist>
-          {field.help ? <div style={{ fontSize: 12, opacity: 0.65, marginTop: 6 }}>{field.help}</div> : null}
-        </div>
-      );
-    case "diffapproval":
-      return (
-        <div>
-          {label}
-          <div style={{ marginTop: 6, border:"1px solid var(--border)", borderRadius: 10, padding: 8, background:"rgba(0,0,0,0.18)" }}>
-            <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 6 }}>{field.summary ?? "Proposed changes"}</div>
-            <DiffView diff={field.diff ?? ""} />
-            <div style={{ display:"flex", gap:8, marginTop: 8 }}>
-              <button style={primaryBtnStyle()} onClick={() => onChange("approve")}>Approve</button>
-              <button style={btnStyle()} onClick={() => onChange("reject")}>Reject</button>
-            </div>
-          </div>
-        </div>
-      );
-    default:
-      return (
-        <div>
-          {label}
-          <div style={{ fontSize: 12, opacity: 0.6, marginTop: 6 }}>Unsupported field type: {(field as any).type}</div>
-        </div>
-      );
-  }
 }
 
 function DiffView({ diff }: { diff: string }) {

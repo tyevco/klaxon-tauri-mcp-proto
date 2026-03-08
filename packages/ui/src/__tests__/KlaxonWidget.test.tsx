@@ -72,37 +72,29 @@ describe("KlaxonWidget", () => {
     );
   });
 
-  it("renders form fields when item has form", async () => {
+  it("renders Open Form button when item has a form", async () => {
     mockInvoke.mockResolvedValue([formItem]);
     render(<KlaxonWidget />);
-    await waitFor(() => expect(screen.getByText("Your name")).toBeInTheDocument());
-    // item title "Question" appears twice: as card title and as form description fallback
-    expect(screen.getAllByText("Question").length).toBeGreaterThanOrEqual(1);
+    await waitFor(() => expect(screen.getByText("Open Form")).toBeInTheDocument());
+    expect(screen.queryByText("Your name")).not.toBeInTheDocument();
   });
 
-  it("submit validates required fields — shows error without calling invoke", async () => {
+  it("Open Form button calls klaxon_open_form with item id", async () => {
     mockInvoke.mockResolvedValue([formItem]);
     render(<KlaxonWidget />);
-    await waitFor(() => screen.getByText("Your name"));
-    fireEvent.click(screen.getByText("Submit"));
-    await waitFor(() => expect(screen.getByText("Required")).toBeInTheDocument());
-    expect(mockInvoke).not.toHaveBeenCalledWith("klaxon_answer", expect.anything());
-  });
-
-  it("submit calls klaxon_answer with collected values", async () => {
-    mockInvoke.mockResolvedValue([formItem]);
-    render(<KlaxonWidget />);
-    await waitFor(() => screen.getByText("Your name"));
-    // Find the text input rendered for the "name" field (label "Your name")
-    const input = screen.getByRole("textbox");
-    fireEvent.change(input, { target: { value: "Alice" } });
-    fireEvent.click(screen.getByText("Submit"));
+    await waitFor(() => screen.getByText("Open Form"));
+    fireEvent.click(screen.getByText("Open Form"));
     await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith("klaxon_answer", {
-        id: formItem.id,
-        response: { name: "Alice" },
-      }),
+      expect(mockInvoke).toHaveBeenCalledWith("klaxon_open_form", { id: formItem.id }),
     );
+  });
+
+  it("shows Answered label for answered form items", async () => {
+    const answeredItem = { ...formItem, status: "answered" };
+    mockInvoke.mockResolvedValue([answeredItem]);
+    render(<KlaxonWidget />);
+    await waitFor(() => expect(screen.getByText("Answered")).toBeInTheDocument());
+    expect(screen.queryByText("Open Form")).not.toBeInTheDocument();
   });
 
   it("refresh button calls klaxon_list_open again", async () => {
