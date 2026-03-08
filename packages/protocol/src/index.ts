@@ -292,3 +292,103 @@ export const AgentInfoSchema = z.object({
 });
 
 export type AgentInfo = z.infer<typeof AgentInfoSchema>;
+
+// --- Cost allocation ---
+
+export const SourceModelTotalsSchema = z.object({
+  source: z.string(),
+  model: z.string(),
+  input_tokens: z.number(),
+  output_tokens: z.number(),
+  cost_usd: z.number(),
+});
+
+export type SourceModelTotals = z.infer<typeof SourceModelTotalsSchema>;
+
+// --- Scratchpad ---
+
+export const ScratchpadEntrySchema = z.object({
+  id: z.number(),
+  content: z.string(),
+  author: z.string(),
+  created_at: z.string(),
+});
+
+export type ScratchpadEntry = z.infer<typeof ScratchpadEntrySchema>;
+
+// --- Checkpoints ---
+
+export const CheckpointSchema = z.object({
+  id: z.number(),
+  label: z.string(),
+  detail: z.string().optional(),
+  progress_pct: z.number().optional(),
+  session_tag: z.string().optional(),
+  created_at: z.string(),
+});
+
+export type Checkpoint = z.infer<typeof CheckpointSchema>;
+
+// --- Log tail ---
+
+export const LogLineSchema = z.object({
+  line: z.string(),
+  stream: z.string(),
+  ts: z.string(),
+});
+
+export type LogLine = z.infer<typeof LogLineSchema>;
+
+// --- Tool call log ---
+
+export const ToolCallEntrySchema = z.object({
+  tool: z.string(),
+  args_summary: z.string(),
+  duration_ms: z.number(),
+  ok: z.boolean(),
+  error: z.string().optional(),
+  client_id: z.string(),
+  called_at: z.string(),
+});
+
+export type ToolCallEntry = z.infer<typeof ToolCallEntrySchema>;
+
+// --- Alert rules ---
+
+export const AlertRuleSchema = z.object({
+  id: z.number(),
+  kind: z.string(),
+  threshold: z.number(),
+  level: z.string(),
+  message: z.string(),
+  enabled: z.boolean(),
+  last_fired_at: z.string().optional(),
+});
+
+export type AlertRule = z.infer<typeof AlertRuleSchema>;
+
+// --- Work queue ---
+
+export const WorkItemSchema = z.object({
+  id: z.number(),
+  title: z.string(),
+  detail: z.string().optional(),
+  status: z.string(),
+  priority: z.number(),
+  agent_id: z.string().optional(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
+export type WorkItem = z.infer<typeof WorkItemSchema>;
+
+// --- Session summary ---
+
+export const SessionSummarySchema = z.object({
+  open_count: z.number(),
+  active_timers: z.array(z.object({ issue_id: z.string(), start: z.string() })),
+  today_cost: z.number(),
+  last_decision: z.string().optional(),
+});
+
+export type SessionSummary = z.infer<typeof SessionSummarySchema>;

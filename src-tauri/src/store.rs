@@ -242,6 +242,17 @@ impl KlaxonStore {
     Some(updated)
   }
 
+  pub async fn list_answered(&self, limit: i64) -> Vec<KlaxonItem> {
+    sqlx::query(
+      "SELECT * FROM klaxon_items WHERE status = 'answered' ORDER BY answered_at DESC LIMIT ?",
+    )
+    .bind(limit)
+    .fetch_all(&self.pool)
+    .await
+    .map(|rows| rows.iter().map(row_to_item).collect())
+    .unwrap_or_default()
+  }
+
   pub async fn answer(&self, id: Uuid, response: serde_json::Value) -> Option<KlaxonItem> {
     let response_json = serde_json::to_string(&response).ok()?;
     let now = Utc::now().to_rfc3339();

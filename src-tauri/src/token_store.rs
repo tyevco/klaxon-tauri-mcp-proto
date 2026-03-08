@@ -23,6 +23,15 @@ pub struct ModelTotals {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct SourceModelTotals {
+  pub source: String,
+  pub model: String,
+  pub input_tokens: u64,
+  pub output_tokens: u64,
+  pub cost_usd: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct DayTotals {
   pub date: String,
   pub cost_usd: f64,
@@ -66,6 +75,25 @@ impl TokenStore {
     .execute(&self.pool)
     .await;
 
+    // Also track per-source for cost allocation
+    let source = delta.source.as_deref().unwrap_or("unknown").to_string();
+    let _ = sqlx::query(
+      "INSERT INTO token_source_entries (date, model, source, input_tokens, output_tokens, cost_usd) \
+       VALUES (?, ?, ?, ?, ?, ?) \
+       ON CONFLICT(date, model, source) DO UPDATE SET \
+         input_tokens  = input_tokens  + excluded.input_tokens, \
+         output_tokens = output_tokens + excluded.output_tokens, \
+         cost_usd      = cost_usd      + excluded.cost_usd",
+    )
+    .bind(&date)
+    .bind(&delta.model)
+    .bind(&source)
+    .bind(delta.input_tokens as i64)
+    .bind(delta.output_tokens as i64)
+    .bind(cost)
+    .execute(&self.pool)
+    .await;
+
     let _ = self.events.send(TokenEvent::Updated);
   }
 
@@ -88,6 +116,37 @@ impl TokenStore {
         let input: i64 = r.try_get("total_input").ok()?;
         let output: i64 = r.try_get("total_output").ok()?;
         Some(DayTotals { date, cost_usd, input_tokens: input as u64, output_tokens: output as u64 })
+      })
+      .collect()
+  }
+
+  pub async fn by_source(&self, days: i64) -> Vec<SourceModelTotals> {
+    let rows = sqlx::query(
+      "SELECT source, model, SUM(input_tokens) as ti, SUM(output_tokens) as to_, SUM(cost_usd) as tc \
+       FROM token_source_entries \
+       WHERE date >= date('now', ?)\
+       GROUP BY source, model \
+       ORDER BY tc DESC",
+    )
+    .bind(format!("-{} days", days - 1))
+    .fetch_all(&self.pool)
+    .await
+    .unwrap_or_default();
+
+    rows.iter()
+      .filter_map(|r| {
+        let source: String = r.try_get("source").ok()?;
+        let model: String = r.try_get("model").ok()?;
+        let input_tokens: i64 = r.try_get("ti").ok()?;
+        let output_tokens: i64 = r.try_get("to_").ok()?;
+        let cost_usd: f64 = r.try_get("tc").ok()?;
+        Some(SourceModelTotals {
+          source,
+          model,
+          input_tokens: input_tokens as u64,
+          output_tokens: output_tokens as u64,
+          cost_usd,
+        })
       })
       .collect()
   }

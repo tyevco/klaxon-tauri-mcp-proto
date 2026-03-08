@@ -6,8 +6,8 @@ import { FormFieldRenderer, validateField } from "../components/FormField";
 
 describe("validateField", () => {
   it("returns null for markdown type regardless of value", () => {
-    expect(validateField({ type: "markdown", id: "m", content: "hi" }, undefined)).toBeNull();
-    expect(validateField({ type: "markdown", id: "m", content: "hi" }, "")).toBeNull();
+    expect(validateField({ type: "markdown", id: "m", label: "", content: "hi" }, undefined)).toBeNull();
+    expect(validateField({ type: "markdown", id: "m", label: "", content: "hi" }, "")).toBeNull();
   });
 
   it("returns Required for empty required text field", () => {
@@ -113,7 +113,7 @@ describe("FormFieldRenderer", () => {
   });
 
   it("renders markdown content without onChange", () => {
-    render(<FormFieldRenderer field={{ type: "markdown", id: "m", content: "**hello**" }} value={undefined} onChange={vi.fn()} />);
+    render(<FormFieldRenderer field={{ type: "markdown", id: "m", label: "", content: "**hello**" }} value={undefined} onChange={vi.fn()} />);
     expect(screen.getByText("hello")).toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });

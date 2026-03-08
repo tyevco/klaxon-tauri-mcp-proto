@@ -14,10 +14,15 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, Mutex};
 
 use crate::{
+  checkpoint_store::CheckpointStore,
+  logtail_store::LogTailStore,
   models::{KlaxonAction, KlaxonForm, KlaxonLevel},
+  queue_store::QueueStore,
+  scratchpad_store::ScratchpadStore,
   store::{KlaxonStore, StoreEvent},
   timer_store::TimerStore,
   token_store::{TokenDelta, TokenStore},
+  toollog_store::{ToolCallEntry, ToolLogStore},
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -33,6 +38,11 @@ pub struct McpState {
   pub store: Arc<KlaxonStore>,
   pub timer: Arc<TimerStore>,
   pub tokens: Arc<TokenStore>,
+  pub scratchpad: Arc<ScratchpadStore>,
+  pub checkpoints: Arc<CheckpointStore>,
+  pub logtail: Arc<LogTailStore>,
+  pub tool_log: Arc<ToolLogStore>,
+  pub queue: Arc<QueueStore>,
   pub bearer: String,
   pub agents: Arc<Mutex<HashMap<String, AgentInfo>>>,
   pub agent_events: broadcast::Sender<()>,
@@ -108,12 +118,17 @@ pub async fn start_mcp_server(
   store: Arc<KlaxonStore>,
   timer: Arc<TimerStore>,
   tokens: Arc<TokenStore>,
+  scratchpad: Arc<ScratchpadStore>,
+  checkpoints: Arc<CheckpointStore>,
+  logtail: Arc<LogTailStore>,
+  tool_log: Arc<ToolLogStore>,
+  queue: Arc<QueueStore>,
   port: u16,
 ) -> anyhow::Result<(SocketAddr, String, Arc<Mutex<HashMap<String, AgentInfo>>>, broadcast::Receiver<()>)> {
   let bearer = generate_bearer();
   let agents: Arc<Mutex<HashMap<String, AgentInfo>>> = Arc::new(Mutex::new(HashMap::new()));
   let (agent_tx, agent_rx) = broadcast::channel(64);
-  let state = McpState { store, timer, tokens, bearer: bearer.clone(), agents: agents.clone(), agent_events: agent_tx };
+  let state = McpState { store, timer, tokens, scratchpad, checkpoints, logtail, tool_log, queue, bearer: bearer.clone(), agents: agents.clone(), agent_events: agent_tx };
 
   let app = Router::new()
     .route("/mcp", post(handle_post).get(handle_sse))
@@ -188,7 +203,7 @@ async fn handle_post(
       responses.push(err(id, -32600, "Invalid JSON-RPC version"));
       continue;
     }
-    let res = handle_method(&state, &req, id).await;
+    let res = handle_method(&state, &req, id, &client_id).await;
     responses.push(res);
   }
 
@@ -230,7 +245,7 @@ async fn handle_post(
     .into_response()
 }
 
-async fn handle_method(state: &McpState, req: &JsonRpcRequest, id: serde_json::Value) -> JsonRpcResponse {
+async fn handle_method(state: &McpState, req: &JsonRpcRequest, id: serde_json::Value, client_id: &str) -> JsonRpcResponse {
   match req.method.as_str() {
     "initialize" => ok(
       id,
@@ -279,99 +294,38 @@ async fn handle_method(state: &McpState, req: &JsonRpcRequest, id: serde_json::V
           {"name":"timer.start","description":"Start tracking time on an issue","inputSchema":{"type":"object","properties":{"issue":{"type":"string"}},"required":["issue"]}},
           {"name":"timer.stop","description":"Stop the active timer","inputSchema":{"type":"object","properties":{}}},
           {"name":"timer.switch","description":"Stop current timer and start one for a new issue","inputSchema":{"type":"object","properties":{"issue":{"type":"string"}},"required":["issue"]}},
-          {"name":"tokens.add","description":"Report token usage delta","inputSchema":{"type":"object","properties":{"model":{"type":"string"},"input_tokens":{"type":"number"},"output_tokens":{"type":"number"},"cost_usd":{"type":"number"},"source":{"type":"string"}},"required":["model","input_tokens","output_tokens"]}}
+          {"name":"tokens.add","description":"Report token usage delta","inputSchema":{"type":"object","properties":{"model":{"type":"string"},"input_tokens":{"type":"number"},"output_tokens":{"type":"number"},"cost_usd":{"type":"number"},"source":{"type":"string"}},"required":["model","input_tokens","output_tokens"]}},
+          {"name":"scratchpad.write","description":"Append a note to the shared scratchpad","inputSchema":{"type":"object","properties":{"content":{"type":"string"},"author":{"type":"string"}},"required":["content"]}},
+          {"name":"checkpoint.create","description":"Record a milestone in the checkpoint tracker","inputSchema":{"type":"object","properties":{"label":{"type":"string"},"detail":{"type":"string"},"progress_pct":{"type":"number"},"session_tag":{"type":"string"}},"required":["label"]}},
+          {"name":"logtail.append","description":"Append lines to the live log tail","inputSchema":{"type":"object","properties":{"lines":{"type":"array","items":{"type":"string"}},"stream":{"type":"string"}},"required":["lines"]}},
+          {"name":"queue.push","description":"Push a work item onto the queue","inputSchema":{"type":"object","properties":{"title":{"type":"string"},"detail":{"type":"string"},"priority":{"type":"number"}},"required":["title"]}},
+          {"name":"queue.update","description":"Update status of a work queue item","inputSchema":{"type":"object","properties":{"id":{"type":"number"},"status":{"type":"string"},"detail":{"type":"string"}},"required":["id","status"]}}
         ]
       }),
     ),
     "tools/call" => {
       let name = req.params.get("name").and_then(|v| v.as_str()).unwrap_or("");
       let args = req.params.get("arguments").cloned().unwrap_or(serde_json::json!({}));
+      let call_start = std::time::Instant::now();
 
-      match name {
-        "klaxon.notify" => match parse_notify_args(&args) {
-          Ok((level, title, message, ttl_ms, actions)) => {
-            let it = state.store.notify(level, title, message, ttl_ms).await;
-            if !actions.is_empty() {
-              let _ = state.store.set_actions(it.id, actions).await;
-            }
-            ok(id, serde_json::json!({"content":[{"type":"text","text":it.id.to_string()}],"id":it.id.to_string()}))
-          }
-          Err(e) => err(id, -32602, e),
-        },
-        "klaxon.ask" => match parse_ask_args(&args) {
-          Ok((level, title, message, form, ttl_ms)) => {
-            let it = state.store.ask(level, title, message, form, ttl_ms).await;
-            ok(id, serde_json::json!({"content":[{"type":"text","text":it.id.to_string()}],"id":it.id.to_string()}))
-          }
-          Err(e) => err(id, -32602, e),
-        },
-        "klaxon.ack" => {
-          let Some(id_str) = args.get("id").and_then(|v| v.as_str()) else {
-            return err(id, -32602, "Missing id");
-          };
-          let Ok(uuid) = uuid::Uuid::parse_str(id_str) else {
-            return err(id, -32602, "Invalid id");
-          };
-          let _ = state.store.ack(uuid).await;
-          ok(id, serde_json::json!({"ok": true}))
-        }
-        "klaxon.dismiss" => {
-          let Some(id_str) = args.get("id").and_then(|v| v.as_str()) else {
-            return err(id, -32602, "Missing id");
-          };
-          let Ok(uuid) = uuid::Uuid::parse_str(id_str) else {
-            return err(id, -32602, "Invalid id");
-          };
-          let _ = state.store.dismiss(uuid).await;
-          ok(id, serde_json::json!({"ok": true}))
-        }
-        "timer.start" => {
-          let Some(issue) = args.get("issue").and_then(|v| v.as_str()) else {
-            return err(id, -32602, "Missing issue");
-          };
-          match state.timer.start(issue.to_string()).await {
-            Ok(()) => ok(id, serde_json::json!({"ok": true})),
-            Err(e) => err(id, -32602, e),
-          }
-        }
-        "timer.stop" => {
-          let entries = if let Some(issue_id) = args.get("issue_id").and_then(|v| v.as_str()) {
-            state.timer.stop(issue_id).await.into_iter().collect::<Vec<_>>()
-          } else {
-            state.timer.stop_all().await
-          };
-          ok(id, serde_json::json!({
-            "ok": true,
-            "stopped": serde_json::to_value(entries).unwrap_or(serde_json::json!([]))
-          }))
-        }
-        "timer.switch" => {
-          let Some(issue) = args.get("issue").and_then(|v| v.as_str()) else {
-            return err(id, -32602, "Missing issue");
-          };
-          let stopped = state.timer.switch(issue.to_string()).await;
-          ok(id, serde_json::json!({
-            "ok": true,
-            "stopped": serde_json::to_value(stopped).unwrap_or(serde_json::json!([]))
-          }))
-        }
-        "tokens.add" => {
-          let Some(model) = args.get("model").and_then(|v| v.as_str()) else {
-            return err(id, -32602, "Missing model");
-          };
-          let Some(input_tokens) = args.get("input_tokens").and_then(|v| v.as_u64()) else {
-            return err(id, -32602, "Missing input_tokens");
-          };
-          let Some(output_tokens) = args.get("output_tokens").and_then(|v| v.as_u64()) else {
-            return err(id, -32602, "Missing output_tokens");
-          };
-          let cost_usd = args.get("cost_usd").and_then(|v| v.as_f64());
-          let source = args.get("source").and_then(|v| v.as_str()).map(|s| s.to_string());
-          state.tokens.add(TokenDelta { model: model.to_string(), input_tokens, output_tokens, cost_usd, source }).await;
-          ok(id, serde_json::json!({"ok": true}))
-        }
-        _ => err(id, -32601, format!("Unknown tool: {name}")),
-      }
+      let result = handle_tool(state, name, &args, id.clone()).await;
+      let duration_ms = call_start.elapsed().as_millis() as u64;
+
+      let args_summary = serde_json::to_string(&args)
+        .map(|s| if s.len() > 100 { format!("{}…", &s[..100]) } else { s })
+        .unwrap_or_default();
+      let entry_ok = result.error.is_none();
+      let entry_err = result.error.as_ref().map(|e| e.message.clone());
+      state.tool_log.record(ToolCallEntry {
+        tool: name.to_string(),
+        args_summary,
+        duration_ms,
+        ok: entry_ok,
+        error: entry_err,
+        client_id: client_id.to_string(),
+        called_at: Utc::now().to_rfc3339(),
+      }).await;
+      result
     }
     "resources/list" => ok(
       id,
@@ -433,6 +387,143 @@ async fn handle_method(state: &McpState, req: &JsonRpcRequest, id: serde_json::V
       }
     }
     _ => err(id, -32601, format!("Unknown method: {}", req.method)),
+  }
+}
+
+async fn handle_tool(state: &McpState, name: &str, args: &serde_json::Value, id: serde_json::Value) -> JsonRpcResponse {
+  match name {
+    "klaxon.notify" => match parse_notify_args(args) {
+      Ok((level, title, message, ttl_ms, actions)) => {
+        let it = state.store.notify(level, title, message, ttl_ms).await;
+        if !actions.is_empty() {
+          let _ = state.store.set_actions(it.id, actions).await;
+        }
+        ok(id, serde_json::json!({"content":[{"type":"text","text":it.id.to_string()}],"id":it.id.to_string()}))
+      }
+      Err(e) => err(id, -32602, e),
+    },
+    "klaxon.ask" => match parse_ask_args(args) {
+      Ok((level, title, message, form, ttl_ms)) => {
+        let it = state.store.ask(level, title, message, form, ttl_ms).await;
+        ok(id, serde_json::json!({"content":[{"type":"text","text":it.id.to_string()}],"id":it.id.to_string()}))
+      }
+      Err(e) => err(id, -32602, e),
+    },
+    "klaxon.ack" => {
+      let Some(id_str) = args.get("id").and_then(|v| v.as_str()) else {
+        return err(id, -32602, "Missing id");
+      };
+      let Ok(uuid) = uuid::Uuid::parse_str(id_str) else {
+        return err(id, -32602, "Invalid id");
+      };
+      let _ = state.store.ack(uuid).await;
+      ok(id, serde_json::json!({"ok": true}))
+    }
+    "klaxon.dismiss" => {
+      let Some(id_str) = args.get("id").and_then(|v| v.as_str()) else {
+        return err(id, -32602, "Missing id");
+      };
+      let Ok(uuid) = uuid::Uuid::parse_str(id_str) else {
+        return err(id, -32602, "Invalid id");
+      };
+      let _ = state.store.dismiss(uuid).await;
+      ok(id, serde_json::json!({"ok": true}))
+    }
+    "timer.start" => {
+      let Some(issue) = args.get("issue").and_then(|v| v.as_str()) else {
+        return err(id, -32602, "Missing issue");
+      };
+      match state.timer.start(issue.to_string()).await {
+        Ok(()) => ok(id, serde_json::json!({"ok": true})),
+        Err(e) => err(id, -32602, e),
+      }
+    }
+    "timer.stop" => {
+      let entries = if let Some(issue_id) = args.get("issue_id").and_then(|v| v.as_str()) {
+        state.timer.stop(issue_id).await.into_iter().collect::<Vec<_>>()
+      } else {
+        state.timer.stop_all().await
+      };
+      ok(id, serde_json::json!({
+        "ok": true,
+        "stopped": serde_json::to_value(entries).unwrap_or(serde_json::json!([]))
+      }))
+    }
+    "timer.switch" => {
+      let Some(issue) = args.get("issue").and_then(|v| v.as_str()) else {
+        return err(id, -32602, "Missing issue");
+      };
+      let stopped = state.timer.switch(issue.to_string()).await;
+      ok(id, serde_json::json!({
+        "ok": true,
+        "stopped": serde_json::to_value(stopped).unwrap_or(serde_json::json!([]))
+      }))
+    }
+    "tokens.add" => {
+      let Some(model) = args.get("model").and_then(|v| v.as_str()) else {
+        return err(id, -32602, "Missing model");
+      };
+      let Some(input_tokens) = args.get("input_tokens").and_then(|v| v.as_u64()) else {
+        return err(id, -32602, "Missing input_tokens");
+      };
+      let Some(output_tokens) = args.get("output_tokens").and_then(|v| v.as_u64()) else {
+        return err(id, -32602, "Missing output_tokens");
+      };
+      let cost_usd = args.get("cost_usd").and_then(|v| v.as_f64());
+      let source = args.get("source").and_then(|v| v.as_str()).map(|s| s.to_string());
+      state.tokens.add(TokenDelta { model: model.to_string(), input_tokens, output_tokens, cost_usd, source }).await;
+      ok(id, serde_json::json!({"ok": true}))
+    }
+    "scratchpad.write" => {
+      let Some(content) = args.get("content").and_then(|v| v.as_str()) else {
+        return err(id, -32602, "Missing content");
+      };
+      let author = args.get("author").and_then(|v| v.as_str()).unwrap_or("agent").to_string();
+      let entry = state.scratchpad.add(content.to_string(), author).await;
+      ok(id, serde_json::json!({"ok": true, "id": entry.id}))
+    }
+    "checkpoint.create" => {
+      let Some(label) = args.get("label").and_then(|v| v.as_str()) else {
+        return err(id, -32602, "Missing label");
+      };
+      let detail = args.get("detail").and_then(|v| v.as_str()).map(|s| s.to_string());
+      let progress_pct = args.get("progress_pct").and_then(|v| v.as_i64());
+      let session_tag = args.get("session_tag").and_then(|v| v.as_str()).map(|s| s.to_string());
+      let cp = state.checkpoints.create(label.to_string(), detail, progress_pct, session_tag).await;
+      ok(id, serde_json::json!({"ok": true, "id": cp.id}))
+    }
+    "logtail.append" => {
+      let Some(lines_val) = args.get("lines").and_then(|v| v.as_array()) else {
+        return err(id, -32602, "Missing lines array");
+      };
+      let lines: Vec<String> = lines_val.iter()
+        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+        .collect();
+      let stream = args.get("stream").and_then(|v| v.as_str()).unwrap_or("stdout").to_string();
+      state.logtail.append(lines, stream).await;
+      ok(id, serde_json::json!({"ok": true}))
+    }
+    "queue.push" => {
+      let Some(title) = args.get("title").and_then(|v| v.as_str()) else {
+        return err(id, -32602, "Missing title");
+      };
+      let detail = args.get("detail").and_then(|v| v.as_str()).map(|s| s.to_string());
+      let priority = args.get("priority").and_then(|v| v.as_i64()).unwrap_or(0);
+      let item = state.queue.push(title.to_string(), detail, priority, None).await;
+      ok(id, serde_json::json!({"ok": true, "id": item.id}))
+    }
+    "queue.update" => {
+      let Some(item_id) = args.get("id").and_then(|v| v.as_i64()) else {
+        return err(id, -32602, "Missing id");
+      };
+      let Some(status) = args.get("status").and_then(|v| v.as_str()) else {
+        return err(id, -32602, "Missing status");
+      };
+      let detail = args.get("detail").and_then(|v| v.as_str()).map(|s| s.to_string());
+      state.queue.update_status(item_id, status.to_string(), detail).await;
+      ok(id, serde_json::json!({"ok": true}))
+    }
+    _ => err(id, -32601, format!("Unknown tool: {name}")),
   }
 }
 
