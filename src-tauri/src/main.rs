@@ -18,7 +18,7 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::{
-  mcp_http::start_mcp_server,
+  mcp_http::{start_mcp_server, AgentInfo},
   models::{KlaxonLevel, KlaxonStatus},
   settings_store::{AppSettings, SettingsStore},
   store::{KlaxonStore, StoreEvent},
@@ -274,6 +274,33 @@ async fn settings_set(
 }
 
 #[tauri::command]
+async fn klaxon_list_all(
+  state: tauri::State<'_, Arc<KlaxonStore>>,
+  limit: i64,
+  offset: i64,
+) -> Result<Vec<crate::models::KlaxonItem>, String> {
+  Ok(state.list_all(limit, offset).await)
+}
+
+#[tauri::command]
+async fn tokens_week(state: tauri::State<'_, Arc<TokenStore>>) -> Result<Vec<crate::token_store::DayTotals>, String> {
+  Ok(state.week_totals().await)
+}
+
+#[tauri::command]
+async fn timer_week(state: tauri::State<'_, Arc<TimerStore>>) -> Result<Vec<crate::timer_store::WeekEntry>, String> {
+  Ok(state.week_summary().await)
+}
+
+#[tauri::command]
+async fn mcp_list_agents(
+  state: tauri::State<'_, Arc<tokio::sync::Mutex<std::collections::HashMap<String, AgentInfo>>>>,
+) -> Result<Vec<AgentInfo>, String> {
+  let map = state.lock().await;
+  Ok(map.values().cloned().collect())
+}
+
+#[tauri::command]
 async fn mcp_get_status(
   state: tauri::State<'_, Arc<Mutex<Option<McpStatus>>>>,
 ) -> Result<Option<McpStatus>, String> {
@@ -435,11 +462,15 @@ fn main() {
 
       // --- Panel windows ---
       let panels: &[(&str, f64, f64, f64, f64)] = &[
-        ("klaxon",   400.0, 560.0, 24.0,   24.0),
-        ("timer",    320.0, 380.0, 440.0,  24.0),
-        ("tokens",   300.0, 280.0, 780.0,  24.0),
-        ("settings", 340.0, 420.0, 1100.0, 24.0),
-        ("form",     480.0, 600.0, 200.0,  100.0),
+        ("klaxon",       400.0, 560.0, 24.0,   24.0),
+        ("timer",        320.0, 380.0, 440.0,  24.0),
+        ("tokens",       300.0, 280.0, 780.0,  24.0),
+        ("settings",     340.0, 420.0, 1100.0, 24.0),
+        ("form",         480.0, 600.0, 200.0,  100.0),
+        ("history",      500.0, 620.0, 24.0,   610.0),
+        ("timer-report", 480.0, 420.0, 440.0,  430.0),
+        ("budget",       280.0, 360.0, 780.0,  320.0),
+        ("agents",       320.0, 400.0, 1100.0, 460.0),
       ];
       for &(label, w, h, dx, dy) in panels {
         let url = tauri::WebviewUrl::App(format!("?panel={label}").into());
@@ -465,13 +496,26 @@ fn main() {
         settings_store.get().await.mcp_preferred_port
       });
       tauri::async_runtime::spawn(async move {
-        let (addr, bearer) = match start_mcp_server(store.clone(), timer_store.clone(), token_store.clone(), preferred_port).await {
+        let (addr, bearer, agents_map, mut agent_rx) = match start_mcp_server(store.clone(), timer_store.clone(), token_store.clone(), preferred_port).await {
           Ok(v) => v,
           Err(e) => {
             eprintln!("Failed to start MCP server: {e:?}");
             return;
           }
         };
+
+        // Register agents map as Tauri state and bridge agent_events
+        app_handle.manage(agents_map);
+        let ah2 = app_handle.clone();
+        tauri::async_runtime::spawn(async move {
+          loop {
+            match agent_rx.recv().await {
+              Ok(()) => { let _ = ah2.emit("agents.updated", serde_json::Value::Null); }
+              Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+              Err(_) => break,
+            }
+          }
+        });
 
         eprintln!("MCP server listening at http://{}/mcp", addr);
         eprintln!("MCP bearer token: {}", bearer);
@@ -508,17 +552,24 @@ fn main() {
       });
 
       // --- System Tray ---
-      let klaxon_item   = MenuItem::with_id(app.handle(), "toggle-klaxon",   "Klaxon",   true, None::<&str>)?;
-      let timer_item    = MenuItem::with_id(app.handle(), "toggle-timer",    "Timer",    true, None::<&str>)?;
-      let tokens_item   = MenuItem::with_id(app.handle(), "toggle-tokens",   "Tokens",   true, None::<&str>)?;
-      let settings_item = MenuItem::with_id(app.handle(), "toggle-settings", "Settings", true, None::<&str>)?;
-      let demo_item     = MenuItem::with_id(app.handle(), "demo-seed",       "Run Demo", true, None::<&str>)?;
-      let quit_item     = MenuItem::with_id(app.handle(), "quit",            "Quit",     true, None::<&str>)?;
+      let klaxon_item      = MenuItem::with_id(app.handle(), "toggle-klaxon",       "Klaxon",       true, None::<&str>)?;
+      let timer_item       = MenuItem::with_id(app.handle(), "toggle-timer",        "Timer",        true, None::<&str>)?;
+      let tokens_item      = MenuItem::with_id(app.handle(), "toggle-tokens",       "Tokens",       true, None::<&str>)?;
+      let settings_item    = MenuItem::with_id(app.handle(), "toggle-settings",     "Settings",     true, None::<&str>)?;
+      let history_item     = MenuItem::with_id(app.handle(), "toggle-history",      "History",      true, None::<&str>)?;
+      let report_item      = MenuItem::with_id(app.handle(), "toggle-timer-report", "Timer Report", true, None::<&str>)?;
+      let budget_item      = MenuItem::with_id(app.handle(), "toggle-budget",       "Budget",       true, None::<&str>)?;
+      let agents_item      = MenuItem::with_id(app.handle(), "toggle-agents",       "Agents",       true, None::<&str>)?;
+      let demo_item        = MenuItem::with_id(app.handle(), "demo-seed",           "Run Demo",     true, None::<&str>)?;
+      let quit_item        = MenuItem::with_id(app.handle(), "quit",                "Quit",         true, None::<&str>)?;
       let sep1 = PredefinedMenuItem::separator(app.handle())?;
       let sep2 = PredefinedMenuItem::separator(app.handle())?;
+      let sep3 = PredefinedMenuItem::separator(app.handle())?;
       let tray_menu = Menu::with_items(app.handle(), &[
         &klaxon_item, &timer_item, &tokens_item, &settings_item,
-        &sep1, &demo_item, &sep2,
+        &sep1,
+        &history_item, &report_item, &budget_item, &agents_item,
+        &sep2, &demo_item, &sep3,
         &quit_item,
       ])?;
 
@@ -538,10 +589,14 @@ fn main() {
         .menu(&tray_menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
-          "toggle-klaxon"   => toggle_panel(app, "klaxon"),
-          "toggle-timer"    => toggle_panel(app, "timer"),
-          "toggle-tokens"   => toggle_panel(app, "tokens"),
-          "toggle-settings" => toggle_panel(app, "settings"),
+          "toggle-klaxon"       => toggle_panel(app, "klaxon"),
+          "toggle-timer"        => toggle_panel(app, "timer"),
+          "toggle-tokens"       => toggle_panel(app, "tokens"),
+          "toggle-settings"     => toggle_panel(app, "settings"),
+          "toggle-history"      => toggle_panel(app, "history"),
+          "toggle-timer-report" => toggle_panel(app, "timer-report"),
+          "toggle-budget"       => toggle_panel(app, "budget"),
+          "toggle-agents"       => toggle_panel(app, "agents"),
           "demo-seed" => {
             let store  = app.state::<Arc<KlaxonStore>>().inner().clone();
             let timer  = app.state::<Arc<TimerStore>>().inner().clone();
@@ -568,6 +623,7 @@ fn main() {
     })
     .invoke_handler(tauri::generate_handler![
       klaxon_list_open,
+      klaxon_list_all,
       klaxon_ack,
       klaxon_dismiss,
       klaxon_answer,
@@ -581,11 +637,14 @@ fn main() {
       timer_switch,
       timer_today,
       timer_active,
+      timer_week,
       tokens_today,
       tokens_add,
+      tokens_week,
       settings_get,
       settings_set,
       mcp_get_status,
+      mcp_list_agents,
       start_panel_drag,
       set_panel_always_on_top,
       hide_panel,

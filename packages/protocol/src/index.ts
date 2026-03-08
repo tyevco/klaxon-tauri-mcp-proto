@@ -262,3 +262,33 @@ export const ModelTotalsSchema = z.object({
 });
 
 export type ModelTotals = z.infer<typeof ModelTotalsSchema>;
+
+export const DayTotalsSchema = z.object({
+  date: z.string(),
+  cost_usd: z.number(),
+  input_tokens: z.number(),
+  output_tokens: z.number(),
+});
+
+export type DayTotals = z.infer<typeof DayTotalsSchema>;
+
+// --- Timer report ---
+
+export const WeekEntrySchema = z.object({
+  issue_id: z.string(),
+  date: z.string(),
+  seconds: z.number(),
+});
+
+export type WeekEntry = z.infer<typeof WeekEntrySchema>;
+
+// --- Agent connections ---
+
+export const AgentInfoSchema = z.object({
+  client_id: z.string(),
+  last_seen: z.string(),
+  last_tool: z.string().optional(),
+  calls_today: z.number(),
+});
+
+export type AgentInfo = z.infer<typeof AgentInfoSchema>;

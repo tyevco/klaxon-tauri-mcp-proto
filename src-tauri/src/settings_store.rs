@@ -4,11 +4,12 @@ use sqlx::SqlitePool;
 pub struct AppSettings {
   pub theme: String,
   pub mcp_preferred_port: u16,
+  pub budget_usd_daily: f64,
 }
 
 impl Default for AppSettings {
   fn default() -> Self {
-    Self { theme: "dark".into(), mcp_preferred_port: 0 }
+    Self { theme: "dark".into(), mcp_preferred_port: 0, budget_usd_daily: 0.0 }
   }
 }
 
@@ -40,6 +41,11 @@ impl SettingsStore {
             settings.mcp_preferred_port = p;
           }
         }
+        "budget_usd_daily" => {
+          if let Ok(v) = value.parse::<f64>() {
+            settings.budget_usd_daily = v;
+          }
+        }
         _ => {}
       }
     }
@@ -50,6 +56,7 @@ impl SettingsStore {
     let pairs = [
       ("theme", settings.theme.clone()),
       ("mcp_preferred_port", settings.mcp_preferred_port.to_string()),
+      ("budget_usd_daily", settings.budget_usd_daily.to_string()),
     ];
     for (key, value) in &pairs {
       let _ = sqlx::query(

@@ -22,6 +22,14 @@ pub struct ModelTotals {
   pub cost_usd: f64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct DayTotals {
+  pub date: String,
+  pub cost_usd: f64,
+  pub input_tokens: u64,
+  pub output_tokens: u64,
+}
+
 #[derive(Debug, Clone)]
 pub enum TokenEvent {
   Updated,
@@ -59,6 +67,29 @@ impl TokenStore {
     .await;
 
     let _ = self.events.send(TokenEvent::Updated);
+  }
+
+  pub async fn week_totals(&self) -> Vec<DayTotals> {
+    let rows = sqlx::query(
+      "SELECT date, SUM(cost_usd) as total_cost, SUM(input_tokens) as total_input, SUM(output_tokens) as total_output \
+       FROM token_entries \
+       WHERE date >= date('now', '-6 days') \
+       GROUP BY date \
+       ORDER BY date ASC",
+    )
+    .fetch_all(&self.pool)
+    .await
+    .unwrap_or_default();
+
+    rows.iter()
+      .filter_map(|r| {
+        let date: String = r.try_get("date").ok()?;
+        let cost_usd: f64 = r.try_get("total_cost").ok()?;
+        let input: i64 = r.try_get("total_input").ok()?;
+        let output: i64 = r.try_get("total_output").ok()?;
+        Some(DayTotals { date, cost_usd, input_tokens: input as u64, output_tokens: output as u64 })
+      })
+      .collect()
   }
 
   pub async fn today_totals(&self) -> Vec<ModelTotals> {

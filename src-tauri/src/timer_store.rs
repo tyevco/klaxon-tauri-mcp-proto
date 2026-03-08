@@ -21,6 +21,13 @@ pub struct IssueSummary {
   pub active_since: Option<DateTime<Utc>>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct WeekEntry {
+  pub issue_id: String,
+  pub date: String,
+  pub seconds: u64,
+}
+
 #[derive(Debug, Clone)]
 pub enum TimerEvent {
   Updated,
@@ -111,6 +118,28 @@ impl TimerStore {
     let stopped = self.stop_all().await;
     let _ = self.start(issue_id).await;
     stopped
+  }
+
+  pub async fn week_summary(&self) -> Vec<WeekEntry> {
+    let rows = sqlx::query(
+      "SELECT issue_id, date, SUM(seconds) as total_seconds \
+       FROM timer_entries \
+       WHERE date >= date('now', '-6 days') \
+       GROUP BY issue_id, date \
+       ORDER BY date DESC, total_seconds DESC",
+    )
+    .fetch_all(&self.pool)
+    .await
+    .unwrap_or_default();
+
+    rows.iter()
+      .filter_map(|r| {
+        let issue_id: String = r.try_get("issue_id").ok()?;
+        let date: String = r.try_get("date").ok()?;
+        let total: i64 = r.try_get("total_seconds").ok()?;
+        Some(WeekEntry { issue_id, date, seconds: total as u64 })
+      })
+      .collect()
   }
 
   pub async fn today_summary(&self) -> Vec<IssueSummary> {

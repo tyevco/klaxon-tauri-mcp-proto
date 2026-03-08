@@ -83,6 +83,25 @@ impl KlaxonStore {
       .unwrap_or_default()
   }
 
+  pub async fn list_all(&self, limit: i64, offset: i64) -> Vec<KlaxonItem> {
+    // Expire items whose TTL has elapsed
+    let _ = sqlx::query(
+      "UPDATE klaxon_items SET status = 'expired' \
+       WHERE status = 'open' AND ttl_ms IS NOT NULL \
+       AND (CAST(strftime('%s', 'now') AS INTEGER) - CAST(strftime('%s', created_at) AS INTEGER)) * 1000 >= ttl_ms"
+    )
+    .execute(&self.pool)
+    .await;
+
+    sqlx::query("SELECT * FROM klaxon_items ORDER BY created_at DESC LIMIT ? OFFSET ?")
+      .bind(limit)
+      .bind(offset)
+      .fetch_all(&self.pool)
+      .await
+      .map(|rows| rows.iter().map(row_to_item).collect())
+      .unwrap_or_default()
+  }
+
   pub async fn get(&self, id: Uuid) -> Option<KlaxonItem> {
     self.get_item(id).await
   }

@@ -6,6 +6,10 @@ import { TimerWidget } from "./widgets/TimerWidget";
 import { TokenWidget } from "./widgets/TokenWidget";
 import { SettingsWidget } from "./widgets/SettingsWidget";
 import { FormWidget } from "./widgets/FormWidget";
+import { HistoryWidget } from "./widgets/HistoryWidget";
+import { TimerReportWidget } from "./widgets/TimerReportWidget";
+import { BudgetWidget } from "./widgets/BudgetWidget";
+import { AgentsWidget } from "./widgets/AgentsWidget";
 
 interface AppSettings {
   theme: string;
@@ -29,5 +33,9 @@ export function App() {
   if (panel === "tokens") return <TokenWidget />;
   if (panel === "settings") return <SettingsWidget />;
   if (panel === "form") return <FormWidget />;
+  if (panel === "history") return <HistoryWidget />;
+  if (panel === "timer-report") return <TimerReportWidget />;
+  if (panel === "budget") return <BudgetWidget />;
+  if (panel === "agents") return <AgentsWidget />;
   return <KlaxonWidget />;
 }

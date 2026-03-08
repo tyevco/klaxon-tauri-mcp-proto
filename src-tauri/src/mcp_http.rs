@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 
 use axum::{
   extract::State,
@@ -7,10 +7,11 @@ use axum::{
   routing::{get, post},
   Json, Router,
 };
+use chrono::Utc;
 use futures::{Stream, StreamExt};
 use rand::{distributions::Alphanumeric, Rng};
 use serde::{Deserialize, Serialize};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Mutex};
 
 use crate::{
   models::{KlaxonAction, KlaxonForm, KlaxonLevel},
@@ -19,12 +20,22 @@ use crate::{
   token_store::{TokenDelta, TokenStore},
 };
 
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentInfo {
+  pub client_id: String,
+  pub last_seen: String,
+  pub last_tool: Option<String>,
+  pub calls_today: u64,
+}
+
 #[derive(Clone)]
 pub struct McpState {
   pub store: Arc<KlaxonStore>,
   pub timer: Arc<TimerStore>,
   pub tokens: Arc<TokenStore>,
   pub bearer: String,
+  pub agents: Arc<Mutex<HashMap<String, AgentInfo>>>,
+  pub agent_events: broadcast::Sender<()>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -98,9 +109,11 @@ pub async fn start_mcp_server(
   timer: Arc<TimerStore>,
   tokens: Arc<TokenStore>,
   port: u16,
-) -> anyhow::Result<(SocketAddr, String)> {
+) -> anyhow::Result<(SocketAddr, String, Arc<Mutex<HashMap<String, AgentInfo>>>, broadcast::Receiver<()>)> {
   let bearer = generate_bearer();
-  let state = McpState { store, timer, tokens, bearer: bearer.clone() };
+  let agents: Arc<Mutex<HashMap<String, AgentInfo>>> = Arc::new(Mutex::new(HashMap::new()));
+  let (agent_tx, agent_rx) = broadcast::channel(64);
+  let state = McpState { store, timer, tokens, bearer: bearer.clone(), agents: agents.clone(), agent_events: agent_tx };
 
   let app = Router::new()
     .route("/mcp", post(handle_post).get(handle_sse))
@@ -116,7 +129,7 @@ pub async fn start_mcp_server(
     let _ = axum::serve(listener, app).await;
   });
 
-  Ok((addr, bearer))
+  Ok((addr, bearer, agents, agent_rx))
 }
 
 async fn handle_post(
@@ -138,6 +151,32 @@ async fn handle_post(
     JsonRpcPayload::One(r) => (vec![r], false),
     JsonRpcPayload::Batch(v) => (v, true),
   };
+
+  // Track agent activity
+  let client_id = headers
+    .get("x-client-id")
+    .and_then(|v| v.to_str().ok())
+    .unwrap_or("unknown")
+    .to_string();
+  let last_tool = reqs.iter()
+    .find(|r| r.method == "tools/call")
+    .and_then(|r| r.params.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()));
+  let had_tool_call = last_tool.is_some();
+  {
+    let mut agents = state.agents.lock().await;
+    let entry = agents.entry(client_id.clone()).or_insert_with(|| AgentInfo {
+      client_id: client_id.clone(),
+      last_seen: Utc::now().to_rfc3339(),
+      last_tool: None,
+      calls_today: 0,
+    });
+    entry.last_seen = Utc::now().to_rfc3339();
+    if had_tool_call {
+      entry.last_tool = last_tool;
+      entry.calls_today += 1;
+    }
+  }
+  let _ = state.agent_events.send(());
 
   let mut responses: Vec<JsonRpcResponse> = Vec::new();
   for req in reqs {
