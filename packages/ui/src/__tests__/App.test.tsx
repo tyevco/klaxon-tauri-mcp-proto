@@ -14,6 +14,18 @@ vi.mock("../widgets/TokenWidget", () => ({
 vi.mock("../widgets/FormWidget", () => ({
   FormWidget: () => <div data-testid="form-widget" />,
 }));
+vi.mock("../widgets/HistoryWidget", () => ({
+  HistoryWidget: () => <div data-testid="history-widget" />,
+}));
+vi.mock("../widgets/TimerReportWidget", () => ({
+  TimerReportWidget: () => <div data-testid="timer-report-widget" />,
+}));
+vi.mock("../widgets/BudgetWidget", () => ({
+  BudgetWidget: () => <div data-testid="budget-widget" />,
+}));
+vi.mock("../widgets/AgentsWidget", () => ({
+  AgentsWidget: () => <div data-testid="agents-widget" />,
+}));
 
 beforeEach(() => {
   Object.defineProperty(window, "location", {
@@ -51,6 +63,30 @@ describe("App panel routing", () => {
     window.location = { search: "?panel=form" } as any;
     render(<App />);
     expect(screen.getByTestId("form-widget")).toBeInTheDocument();
+  });
+
+  it("?panel=history renders HistoryWidget", () => {
+    window.location = { search: "?panel=history" } as any;
+    render(<App />);
+    expect(screen.getByTestId("history-widget")).toBeInTheDocument();
+  });
+
+  it("?panel=timer-report renders TimerReportWidget", () => {
+    window.location = { search: "?panel=timer-report" } as any;
+    render(<App />);
+    expect(screen.getByTestId("timer-report-widget")).toBeInTheDocument();
+  });
+
+  it("?panel=budget renders BudgetWidget", () => {
+    window.location = { search: "?panel=budget" } as any;
+    render(<App />);
+    expect(screen.getByTestId("budget-widget")).toBeInTheDocument();
+  });
+
+  it("?panel=agents renders AgentsWidget", () => {
+    window.location = { search: "?panel=agents" } as any;
+    render(<App />);
+    expect(screen.getByTestId("agents-widget")).toBeInTheDocument();
   });
 
   it("?panel=unknown falls back to KlaxonWidget", () => {
