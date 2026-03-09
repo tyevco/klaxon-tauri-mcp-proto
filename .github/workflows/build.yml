@@ -125,25 +125,17 @@ jobs:
           prerelease: false
           args: ${{ matrix.tauri-args }}
 
-      # Convert tauri-action's JSON artifactPaths array to a newline-separated list
-      # that upload-artifact can consume. fromJSON is not valid in a path: field.
-      - name: Collect artifact paths
-        if: "!startsWith(github.ref, 'refs/tags/')"
-        id: collect
-        shell: python
-        run: |
-          import json, os
-          paths = json.loads(r'${{ steps.tauri.outputs.artifactPaths }}')
-          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-              f.write("paths<<BUNDLE_EOF\n")
-              f.write("\n".join(paths))
-              f.write("\nBUNDLE_EOF\n")
-
-      # Upload bundles as workflow artifacts for non-tag (branch/PR) builds
+      # Upload bundles as workflow artifacts for non-tag (branch/PR) builds.
+      # Use **/bundle/ so the glob matches any target triple (release, universal-apple-darwin, etc.)
       - name: Upload build artifacts
         if: "!startsWith(github.ref, 'refs/tags/')"
         uses: actions/upload-artifact@v4
         with:
           name: klaxon-${{ runner.os }}
-          path: ${{ steps.collect.outputs.paths }}
+          path: |
+            src-tauri/target/**/bundle/**/*.deb
+            src-tauri/target/**/bundle/**/*.AppImage
+            src-tauri/target/**/bundle/**/*.dmg
+            src-tauri/target/**/bundle/**/*.exe
+            src-tauri/target/**/bundle/**/*.msi
           if-no-files-found: warn
