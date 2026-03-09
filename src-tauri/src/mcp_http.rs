@@ -1,4 +1,9 @@
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    net::SocketAddr,
+    sync::{atomic::AtomicU64, Arc},
+    time::Duration,
+};
 
 use axum::{
     extract::State,
@@ -48,6 +53,8 @@ pub struct McpState {
     pub bearer: String,
     pub agents: Arc<Mutex<HashMap<String, AgentInfo>>>,
     pub agent_events: broadcast::Sender<()>,
+    pub sessions: Arc<Mutex<HashSet<String>>>,
+    pub sse_event_counter: Arc<AtomicU64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -111,6 +118,32 @@ fn check_auth(headers: &HeaderMap, bearer: &str) -> bool {
     s.trim() == format!("Bearer {bearer}")
 }
 
+fn forbidden() -> Response {
+    (StatusCode::FORBIDDEN, "Forbidden: invalid origin").into_response()
+}
+
+fn check_origin(headers: &HeaderMap) -> bool {
+    let Some(v) = headers.get(axum::http::header::ORIGIN) else {
+        return true; // absent = non-browser client
+    };
+    let Ok(s) = v.to_str() else {
+        return false;
+    };
+    let s = s.trim();
+    for prefix in ["http://127.0.0.1", "http://localhost"] {
+        if s == prefix || s.starts_with(&format!("{prefix}:")) {
+            return true;
+        }
+    }
+    false
+}
+
+fn generate_session_id() -> String {
+    let suffix: String =
+        rand::thread_rng().sample_iter(&Alphanumeric).take(32).map(char::from).collect();
+    format!("ses_{suffix}")
+}
+
 pub fn generate_bearer() -> String {
     let suffix: String =
         rand::thread_rng().sample_iter(&Alphanumeric).take(28).map(char::from).collect();
@@ -149,10 +182,12 @@ pub async fn start_mcp_server(
         bearer: bearer.clone(),
         agents: agents.clone(),
         agent_events: agent_tx,
+        sessions: Arc::new(Mutex::new(HashSet::new())),
+        sse_event_counter: Arc::new(AtomicU64::new(0)),
     };
 
     let app = Router::new()
-        .route("/mcp", post(handle_post).get(handle_sse))
+        .route("/mcp", post(handle_post).get(handle_sse).delete(handle_delete))
         .route("/mcp/discover", get(handle_discover))
         .route("/health", get(handle_health))
         .with_state(state);
@@ -173,6 +208,10 @@ async fn handle_post(
     headers: HeaderMap,
     Json(payload): Json<JsonRpcPayload>,
 ) -> Response {
+    // Gap 1: Origin validation
+    if !check_origin(&headers) {
+        return forbidden();
+    }
     if !check_auth(&headers, &state.bearer) {
         return unauthorized();
     }
@@ -187,6 +226,25 @@ async fn handle_post(
         JsonRpcPayload::One(r) => (vec![r], false),
         JsonRpcPayload::Batch(v) => (v, true),
     };
+
+    // Gap 2: Session ID validation (skip for initialize requests)
+    let has_initialize = reqs.iter().any(|r| r.method == "initialize");
+    if !has_initialize {
+        let session_hdr = headers
+            .get("mcp-session-id")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        match session_hdr {
+            None => {
+                return (StatusCode::BAD_REQUEST, "Missing Mcp-Session-Id").into_response();
+            }
+            Some(sid) => {
+                if !state.sessions.lock().await.contains(&sid) {
+                    return (StatusCode::CONFLICT, "Invalid or expired session").into_response();
+                }
+            }
+        }
+    }
 
     // Track agent activity
     let client_id =
@@ -219,8 +277,15 @@ async fn handle_post(
     }
     let _ = state.agent_events.send(());
 
+    // Gap 4: Return 202 for notification-only payloads
+    let all_notifications = reqs.iter().all(|r| r.id.is_none());
+    if all_notifications {
+        return StatusCode::ACCEPTED.into_response();
+    }
+
     let mut responses: Vec<JsonRpcResponse> = Vec::new();
-    for req in reqs {
+    let mut new_session_id: Option<String> = None;
+    for req in &reqs {
         if req.id.is_none() {
             continue;
         }
@@ -229,56 +294,75 @@ async fn handle_post(
             responses.push(err(id, -32600, "Invalid JSON-RPC version"));
             continue;
         }
-        let res = handle_method(&state, &req, id, &client_id).await;
+        let (res, session_id) = handle_method(&state, req, id, &client_id).await;
+        if session_id.is_some() && new_session_id.is_none() {
+            new_session_id = session_id;
+        }
         responses.push(res);
     }
 
-    if wants_sse {
+    // Gap 4: Only use SSE when there's a tools/call that could produce follow-up events
+    let has_tool_call = reqs.iter().any(|r| r.method == "tools/call");
+    let use_sse = wants_sse && has_tool_call;
+
+    if use_sse {
         let initial = if is_batch {
             serde_json::to_value(&responses).unwrap_or(serde_json::json!([]))
         } else {
             serde_json::to_value(responses.first()).unwrap_or(serde_json::json!(null))
         };
 
-        let rx = state.store.events.subscribe();
-        let notif_stream = broadcast_stream(rx).map(|evt| {
-      let msg = match evt {
-        StoreEvent::Created(item) => jsonrpc_notification("notifications/klaxon", serde_json::json!({"type":"created","item": item})),
-        StoreEvent::Updated(item) => jsonrpc_notification("notifications/klaxon", serde_json::json!({"type":"updated","item": item})),
-        StoreEvent::Answered { id, response } => jsonrpc_notification(
-          "notifications/klaxon",
-          serde_json::json!({"type":"answered","id": id.to_string(), "response": response}),
-        ),
-      };
-      Ok::<_, std::convert::Infallible>(sse_message_event(&msg))
-    });
+        // Gap 3: Merged notification stream from all stores
+        let counter = state.sse_event_counter.clone();
+        let notif_stream = merged_notification_stream(&state).map(move |notif| {
+            let msg = notification_to_jsonrpc(&notif);
+            let id = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Ok::<_, std::convert::Infallible>(sse_message_event_with_id(&msg, Some(id)))
+        });
 
         let stream = futures::stream::once(async move {
-            Ok::<_, std::convert::Infallible>(sse_message_event(&initial))
+            Ok::<_, std::convert::Infallible>(sse_message_event_with_id(&initial, None))
         })
         .chain(notif_stream);
 
-        return Sse::new(stream)
+        let mut response = Sse::new(stream)
             .keep_alive(
                 axum::response::sse::KeepAlive::new()
                     .interval(Duration::from_secs(15))
                     .text("ping"),
             )
             .into_response();
+
+        if let Some(sid) = new_session_id {
+            response.headers_mut().insert(
+                axum::http::HeaderName::from_static("mcp-session-id"),
+                axum::http::HeaderValue::from_str(&sid).unwrap(),
+            );
+        }
+        return response;
     }
 
-    if is_batch {
-        return Json(serde_json::to_value(responses).unwrap_or(serde_json::json!([])))
-            .into_response();
+    let mut response = if is_batch {
+        Json(serde_json::to_value(responses).unwrap_or(serde_json::json!([]))).into_response()
+    } else {
+        Json(
+            responses
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| err(serde_json::Value::Null, -32600, "Invalid request")),
+        )
+        .into_response()
+    };
+
+    // Gap 2: Set session ID header on response
+    if let Some(sid) = new_session_id {
+        response.headers_mut().insert(
+            axum::http::HeaderName::from_static("mcp-session-id"),
+            axum::http::HeaderValue::from_str(&sid).unwrap(),
+        );
     }
 
-    Json(
-        responses
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| err(serde_json::Value::Null, -32600, "Invalid request")),
-    )
-    .into_response()
+    response
 }
 
 async fn handle_method(
@@ -286,17 +370,24 @@ async fn handle_method(
     req: &JsonRpcRequest,
     id: serde_json::Value,
     client_id: &str,
-) -> JsonRpcResponse {
+) -> (JsonRpcResponse, Option<String>) {
     match req.method.as_str() {
-        "initialize" => ok(
-            id,
-            serde_json::json!({
-              "protocolVersion": "2025-03-26",
-              "capabilities": {"tools": {}, "resources": {}, "prompts": {}},
-              "serverInfo": {"name": "klaxon-tauri-proto", "version": "0.2.0"}
-            }),
-        ),
-        "tools/list" => ok(
+        "initialize" => {
+            let session_id = generate_session_id();
+            state.sessions.lock().await.insert(session_id.clone());
+            (
+                ok(
+                    id,
+                    serde_json::json!({
+                      "protocolVersion": "2025-03-26",
+                      "capabilities": {"tools": {}, "resources": {}, "prompts": {}},
+                      "serverInfo": {"name": "klaxon-tauri-proto", "version": "0.2.0"}
+                    }),
+                ),
+                Some(session_id),
+            )
+        }
+        "tools/list" => (ok(
             id,
             serde_json::json!({
               "tools": [
@@ -343,7 +434,7 @@ async fn handle_method(
                 {"name":"queue.update","description":"Update status of a work queue item","inputSchema":{"type":"object","properties":{"id":{"type":"number"},"status":{"type":"string"},"detail":{"type":"string"}},"required":["id","status"]}}
               ]
             }),
-        ),
+        ), None),
         "tools/call" => {
             let name = req.params.get("name").and_then(|v| v.as_str()).unwrap_or("");
             let args = req.params.get("arguments").cloned().unwrap_or(serde_json::json!({}));
@@ -375,9 +466,9 @@ async fn handle_method(
                     called_at: Utc::now().to_rfc3339(),
                 })
                 .await;
-            result
+            (result, None)
         }
-        "resources/list" => ok(
+        "resources/list" => (ok(
             id,
             serde_json::json!({
               "resources": [
@@ -389,13 +480,13 @@ async fn handle_method(
                 {"uri":"tokens/today","name":"Today's token usage"}
               ]
             }),
-        ),
+        ), None),
         "resources/read" => {
             let Some(uri) = req.params.get("uri").and_then(|v| v.as_str()) else {
-                return err(id, -32602, "Missing uri");
+                return (err(id, -32602, "Missing uri"), None);
             };
 
-            if uri == "klaxon/open" {
+            let res = if uri == "klaxon/open" {
                 let items = state.store.list_open().await;
                 ok(
                     id,
@@ -405,7 +496,7 @@ async fn handle_method(
                 )
             } else if let Some(rest) = uri.strip_prefix("klaxon/item/") {
                 let Ok(uuid) = uuid::Uuid::parse_str(rest) else {
-                    return err(id, -32602, "Invalid id");
+                    return (err(id, -32602, "Invalid id"), None);
                 };
                 let item = state.store.get(uuid).await;
                 ok(
@@ -416,7 +507,7 @@ async fn handle_method(
                 )
             } else if let Some(rest) = uri.strip_prefix("klaxon/answer/") {
                 let Ok(uuid) = uuid::Uuid::parse_str(rest) else {
-                    return err(id, -32602, "Invalid id");
+                    return (err(id, -32602, "Invalid id"), None);
                 };
                 let ans = state.store.get_answer(uuid).await;
                 ok(
@@ -452,9 +543,10 @@ async fn handle_method(
                 )
             } else {
                 err(id, -32602, "Unknown uri")
-            }
+            };
+            (res, None)
         }
-        _ => err(id, -32601, format!("Unknown method: {}", req.method)),
+        _ => (err(id, -32601, format!("Unknown method: {}", req.method)), None),
     }
 }
 
@@ -683,22 +775,160 @@ struct DiscoverResponse {
     protocol_version: &'static str,
 }
 
-async fn handle_discover(State(state): State<McpState>) -> impl IntoResponse {
+async fn handle_discover(
+    State(state): State<McpState>,
+    headers: HeaderMap,
+) -> Response {
+    if !check_origin(&headers) {
+        return forbidden();
+    }
     Json(DiscoverResponse {
         url: "/mcp".to_string(),
         bearer: state.bearer.clone(),
         protocol_version: "2025-03-26",
     })
+    .into_response()
 }
 
 async fn handle_sse(State(state): State<McpState>, headers: HeaderMap) -> Response {
+    // Gap 1: Origin validation
+    if !check_origin(&headers) {
+        return forbidden();
+    }
     if !check_auth(&headers, &state.bearer) {
         return unauthorized();
     }
 
-    let rx = state.store.events.subscribe();
-    let stream = broadcast_stream(rx).map(|evt| {
-        let msg = match evt {
+    // Gap 2: Session ID validation
+    let session_hdr = headers
+        .get("mcp-session-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    match session_hdr {
+        None => {
+            return (StatusCode::BAD_REQUEST, "Missing Mcp-Session-Id").into_response();
+        }
+        Some(sid) => {
+            if !state.sessions.lock().await.contains(&sid) {
+                return (StatusCode::CONFLICT, "Invalid or expired session").into_response();
+            }
+        }
+    }
+
+    // Gap 3: Merged notification stream from all stores
+    let counter = state.sse_event_counter.clone();
+    let stream = merged_notification_stream(&state).map(move |notif| {
+        let msg = notification_to_jsonrpc(&notif);
+        let id = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok::<_, std::convert::Infallible>(sse_message_event_with_id(&msg, Some(id)))
+    });
+
+    Sse::new(stream)
+        .keep_alive(
+            axum::response::sse::KeepAlive::new().interval(Duration::from_secs(15)).text("ping"),
+        )
+        .into_response()
+}
+
+async fn handle_delete(
+    State(state): State<McpState>,
+    headers: HeaderMap,
+) -> Response {
+    if !check_origin(&headers) {
+        return forbidden();
+    }
+    if !check_auth(&headers, &state.bearer) {
+        return unauthorized();
+    }
+
+    let Some(sid) = headers
+        .get("mcp-session-id")
+        .and_then(|v| v.to_str().ok())
+    else {
+        return (StatusCode::BAD_REQUEST, "Missing Mcp-Session-Id").into_response();
+    };
+
+    let removed = state.sessions.lock().await.remove(sid);
+    if removed {
+        (StatusCode::OK, "Session terminated").into_response()
+    } else {
+        (StatusCode::NOT_FOUND, "Session not found").into_response()
+    }
+}
+
+fn jsonrpc_notification(method: &str, params: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({"jsonrpc": "2.0", "method": method, "params": params})
+}
+
+fn sse_message_event_with_id(
+    msg: &serde_json::Value,
+    id: Option<u64>,
+) -> axum::response::sse::Event {
+    let json = serde_json::to_string(msg).unwrap_or_else(|_| "{}".into());
+    let mut event = axum::response::sse::Event::default().event("message").data(json);
+    if let Some(id) = id {
+        event = event.id(id.to_string());
+    }
+    event
+}
+
+fn broadcast_stream<T: Clone>(rx: broadcast::Receiver<T>) -> impl Stream<Item = T> {
+    futures::stream::unfold(rx, |mut rx| async move {
+        loop {
+            match rx.recv().await {
+                Ok(v) => return Some((v, rx)),
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(_) => return None,
+            }
+        }
+    })
+}
+
+enum McpNotification {
+    Klaxon(StoreEvent),
+    Timer,
+    Token,
+    Scratchpad,
+    Checkpoint,
+    LogTail,
+    Queue,
+    ToolLog,
+}
+
+fn merged_notification_stream(state: &McpState) -> impl Stream<Item = McpNotification> + Send {
+    let klaxon = broadcast_stream(state.store.events.subscribe())
+        .map(McpNotification::Klaxon)
+        .boxed();
+    let timer = broadcast_stream(state.timer.events.subscribe())
+        .map(|_| McpNotification::Timer)
+        .boxed();
+    let token = broadcast_stream(state.tokens.events.subscribe())
+        .map(|_| McpNotification::Token)
+        .boxed();
+    let scratchpad = broadcast_stream(state.scratchpad.events.subscribe())
+        .map(|_| McpNotification::Scratchpad)
+        .boxed();
+    let checkpoint = broadcast_stream(state.checkpoints.events.subscribe())
+        .map(|_| McpNotification::Checkpoint)
+        .boxed();
+    let logtail = broadcast_stream(state.logtail.events.subscribe())
+        .map(|_| McpNotification::LogTail)
+        .boxed();
+    let queue = broadcast_stream(state.queue.events.subscribe())
+        .map(|_| McpNotification::Queue)
+        .boxed();
+    let toollog = broadcast_stream(state.tool_log.events.subscribe())
+        .map(|_| McpNotification::ToolLog)
+        .boxed();
+
+    futures::stream::select_all(vec![
+        klaxon, timer, token, scratchpad, checkpoint, logtail, queue, toollog,
+    ])
+}
+
+fn notification_to_jsonrpc(notif: &McpNotification) -> serde_json::Value {
+    match notif {
+        McpNotification::Klaxon(evt) => match evt {
             StoreEvent::Created(item) => jsonrpc_notification(
                 "notifications/klaxon",
                 serde_json::json!({"type":"created","item": item}),
@@ -711,34 +941,29 @@ async fn handle_sse(State(state): State<McpState>, headers: HeaderMap) -> Respon
                 "notifications/klaxon",
                 serde_json::json!({"type":"answered","id": id.to_string(), "response": response}),
             ),
-        };
-        Ok::<_, std::convert::Infallible>(sse_message_event(&msg))
-    });
-
-    Sse::new(stream)
-        .keep_alive(
-            axum::response::sse::KeepAlive::new().interval(Duration::from_secs(15)).text("ping"),
-        )
-        .into_response()
-}
-
-fn jsonrpc_notification(method: &str, params: serde_json::Value) -> serde_json::Value {
-    serde_json::json!({"jsonrpc": "2.0", "method": method, "params": params})
-}
-
-fn sse_message_event(msg: &serde_json::Value) -> axum::response::sse::Event {
-    let json = serde_json::to_string(msg).unwrap_or_else(|_| "{}".into());
-    axum::response::sse::Event::default().event("message").data(json)
-}
-
-fn broadcast_stream(rx: broadcast::Receiver<StoreEvent>) -> impl Stream<Item = StoreEvent> {
-    futures::stream::unfold(rx, |mut rx| async move {
-        loop {
-            match rx.recv().await {
-                Ok(v) => return Some((v, rx)),
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(_) => return None,
-            }
+        },
+        McpNotification::Timer => {
+            jsonrpc_notification("notifications/timer", serde_json::json!({"type":"updated"}))
         }
-    })
+        McpNotification::Token => {
+            jsonrpc_notification("notifications/tokens", serde_json::json!({"type":"updated"}))
+        }
+        McpNotification::Scratchpad => jsonrpc_notification(
+            "notifications/scratchpad",
+            serde_json::json!({"type":"updated"}),
+        ),
+        McpNotification::Checkpoint => jsonrpc_notification(
+            "notifications/checkpoint",
+            serde_json::json!({"type":"updated"}),
+        ),
+        McpNotification::LogTail => {
+            jsonrpc_notification("notifications/logtail", serde_json::json!({"type":"updated"}))
+        }
+        McpNotification::Queue => {
+            jsonrpc_notification("notifications/queue", serde_json::json!({"type":"updated"}))
+        }
+        McpNotification::ToolLog => {
+            jsonrpc_notification("notifications/toollog", serde_json::json!({"type":"updated"}))
+        }
+    }
 }
