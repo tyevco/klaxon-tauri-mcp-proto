@@ -103,9 +103,11 @@ jobs:
           with open("app-icon.png", "wb") as f:
               f.write(png)
 
+          # shell=True is required on Windows where pnpm is pnpm.cmd, not a bare executable
           subprocess.run(
-              ["pnpm", "tauri", "icon", "app-icon.png"],
+              "pnpm tauri icon app-icon.png",
               check=True,
+              shell=True,
           )
 
       # tauri-action calls `pnpm tauri build`, which runs beforeBuildCommand
