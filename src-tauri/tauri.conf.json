@@ -5,7 +5,7 @@
   "identifier": "dev.caffeinepowered.klaxon-proto",
   "build": {
     "beforeDevCommand": "pnpm --filter @klaxon/ui dev",
-    "beforeBuildCommand": "",
+    "beforeBuildCommand": "pnpm --filter @klaxon/protocol build && pnpm --filter @klaxon/ui build",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../packages/ui/dist"
   },

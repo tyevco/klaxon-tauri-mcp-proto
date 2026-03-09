@@ -1,0 +1,140 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    permissions:
+      contents: write # required to create GitHub releases on tag pushes
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            rust-targets: ""
+            tauri-args: ""
+
+          - platform: macos-latest
+            # Build a universal binary that runs natively on both Intel and Apple Silicon
+            rust-targets: "aarch64-apple-darwin,x86_64-apple-darwin"
+            tauri-args: "--target universal-apple-darwin"
+
+          - platform: windows-latest
+            rust-targets: ""
+            tauri-args: ""
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      # Cache the Cargo registry and compiled deps across runs
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # webkit2gtk-4.1 is required for Tauri on Linux; the rest are standard build deps
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Install JS dependencies
+        run: pnpm install
+
+      # The repo only ships icon.ico. Generate the full icon set (PNG sizes + .icns)
+      # required for macOS and Linux bundles using Tauri's built-in icon command.
+      # This step creates a 512×512 placeholder PNG via Python stdlib (no extra deps),
+      # then runs `tauri icon` to produce all platform-specific formats.
+      # For production builds, replace with `pnpm tauri icon <your-1024px-source.png>`
+      # run locally, commit the generated icons, and remove this step.
+      - name: Generate icon set
+        shell: python
+        run: |
+          import struct, zlib, os, subprocess, sys
+
+          icons_dir = os.path.join("src-tauri", "icons")
+          # Skip if PNG icons are already present (locally generated and committed)
+          if os.path.exists(os.path.join(icons_dir, "128x128.png")):
+              print("Icon set already present, skipping generation.")
+              sys.exit(0)
+
+          # Build a minimal 512×512 blue PNG using only Python stdlib
+          def chunk(tag, data):
+              crc = zlib.crc32(tag + data) & 0xffffffff
+              return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", crc)
+
+          w = h = 512
+          row = b"\x00" + bytes([70, 130, 200] * w)  # filter byte + RGB pixels
+          png = (
+              b"\x89PNG\r\n\x1a\n"
+              + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+              + chunk(b"IDAT", zlib.compress(row * h))
+              + chunk(b"IEND", b"")
+          )
+          with open("app-icon.png", "wb") as f:
+              f.write(png)
+
+          subprocess.run(
+              ["pnpm", "tauri", "icon", "app-icon.png"],
+              check=True,
+          )
+
+      # tauri-action calls `pnpm tauri build`, which runs beforeBuildCommand
+      # (builds @klaxon/protocol + @klaxon/ui) before compiling the Rust binary.
+      # On tag pushes it creates a draft GitHub release and attaches the bundles.
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+          releaseName: "Klaxon ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}"
+          releaseDraft: ${{ startsWith(github.ref, 'refs/tags/') }}
+          prerelease: false
+          args: ${{ matrix.tauri-args }}
+
+      # Upload bundles as workflow artifacts for non-tag (branch/PR) builds
+      - name: Upload build artifacts
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: klaxon-${{ runner.os }}
+          path: |
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/**/*.msi
+            src-tauri/target/universal-apple-darwin/release/bundle/**/*.dmg
+          if-no-files-found: warn
