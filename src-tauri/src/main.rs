@@ -142,9 +142,9 @@ async fn klaxon_get_item(
 #[tauri::command]
 fn klaxon_open_form(app: tauri::AppHandle, id: String) -> Result<(), String> {
     let win = app.get_webview_window("form").ok_or_else(|| "form window not found".to_string())?;
-    win.emit("form.open", &serde_json::json!({ "id": id })).map_err(|e| e.to_string())?;
     win.show().map_err(|e| e.to_string())?;
-    win.set_focus().map_err(|e| e.to_string())
+    let _ = win.set_focus(); // focus can fail on Windows due to focus-lock rules; ignore
+    win.emit("form.open", &serde_json::json!({ "id": id })).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
