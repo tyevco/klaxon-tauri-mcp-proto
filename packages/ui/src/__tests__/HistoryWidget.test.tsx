@@ -14,9 +14,31 @@ const mockInvoke = vi.mocked(invoke);
 const today = new Date().toISOString();
 
 const sampleItems = [
-  { id: "1", title: "Build failed", message: "TypeScript error", level: "error", status: "open", created_at: today },
-  { id: "2", title: "Code review", message: "Please approve", level: "info", status: "answered", created_at: today, response: { decision: "approved" } },
-  { id: "3", title: "Old warning", message: "Something happened", level: "warning", status: "dismissed", created_at: "2020-01-01T00:00:00Z" },
+  {
+    id: "1",
+    title: "Build failed",
+    message: "TypeScript error",
+    level: "error",
+    status: "open",
+    created_at: today,
+  },
+  {
+    id: "2",
+    title: "Code review",
+    message: "Please approve",
+    level: "info",
+    status: "answered",
+    created_at: today,
+    response: { decision: "approved" },
+  },
+  {
+    id: "3",
+    title: "Old warning",
+    message: "Something happened",
+    level: "warning",
+    status: "dismissed",
+    created_at: "2020-01-01T00:00:00Z",
+  },
 ];
 
 beforeEach(() => {
@@ -105,7 +127,7 @@ describe("HistoryWidget", () => {
     mockInvoke.mockResolvedValue([]);
     render(<HistoryWidget />);
     await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith("klaxon_list_all", { limit: 200, offset: 0 }),
+      expect(mockInvoke).toHaveBeenCalledWith("klaxon_list_all", { limit: 200, offset: 0 })
     );
   });
 });

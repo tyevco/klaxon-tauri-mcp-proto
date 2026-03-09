@@ -20,7 +20,7 @@ beforeEach(() => {
 
 describe("BudgetWidget", () => {
   it("shows $0.0000 when no token data and no budget", async () => {
-    mockInvoke.mockImplementation((cmd) => {
+    mockInvoke.mockImplementation(cmd => {
       if (cmd === "tokens_week") return Promise.resolve([]);
       if (cmd === "settings_get") return Promise.resolve(noopSettings);
       return Promise.resolve(null);
@@ -30,7 +30,7 @@ describe("BudgetWidget", () => {
   });
 
   it("shows 'no budget set' when budget is zero", async () => {
-    mockInvoke.mockImplementation((cmd) => {
+    mockInvoke.mockImplementation(cmd => {
       if (cmd === "tokens_week") return Promise.resolve([]);
       if (cmd === "settings_get") return Promise.resolve(noopSettings);
       return Promise.resolve(null);
@@ -40,9 +40,11 @@ describe("BudgetWidget", () => {
   });
 
   it("shows budget percentage when budget is set", async () => {
-    mockInvoke.mockImplementation((cmd) => {
-      if (cmd === "tokens_week") return Promise.resolve([{ date: today, cost_usd: 2.5, input_tokens: 0, output_tokens: 0 }]);
-      if (cmd === "settings_get") return Promise.resolve({ ...noopSettings, budget_usd_daily: 10.0 });
+    mockInvoke.mockImplementation(cmd => {
+      if (cmd === "tokens_week")
+        return Promise.resolve([{ date: today, cost_usd: 2.5, input_tokens: 0, output_tokens: 0 }]);
+      if (cmd === "settings_get")
+        return Promise.resolve({ ...noopSettings, budget_usd_daily: 10.0 });
       return Promise.resolve(null);
     });
     render(<BudgetWidget />);
@@ -50,8 +52,9 @@ describe("BudgetWidget", () => {
   });
 
   it("shows today's cost", async () => {
-    mockInvoke.mockImplementation((cmd) => {
-      if (cmd === "tokens_week") return Promise.resolve([{ date: today, cost_usd: 1.5, input_tokens: 0, output_tokens: 0 }]);
+    mockInvoke.mockImplementation(cmd => {
+      if (cmd === "tokens_week")
+        return Promise.resolve([{ date: today, cost_usd: 1.5, input_tokens: 0, output_tokens: 0 }]);
       if (cmd === "settings_get") return Promise.resolve(noopSettings);
       return Promise.resolve(null);
     });
@@ -60,7 +63,7 @@ describe("BudgetWidget", () => {
   });
 
   it("shows Set budget button when no budget", async () => {
-    mockInvoke.mockImplementation((cmd) => {
+    mockInvoke.mockImplementation(cmd => {
       if (cmd === "tokens_week") return Promise.resolve([]);
       if (cmd === "settings_get") return Promise.resolve(noopSettings);
       return Promise.resolve(null);
@@ -70,9 +73,10 @@ describe("BudgetWidget", () => {
   });
 
   it("shows Edit budget button when budget is set", async () => {
-    mockInvoke.mockImplementation((cmd) => {
+    mockInvoke.mockImplementation(cmd => {
       if (cmd === "tokens_week") return Promise.resolve([]);
-      if (cmd === "settings_get") return Promise.resolve({ ...noopSettings, budget_usd_daily: 5.0 });
+      if (cmd === "settings_get")
+        return Promise.resolve({ ...noopSettings, budget_usd_daily: 5.0 });
       return Promise.resolve(null);
     });
     render(<BudgetWidget />);
@@ -80,7 +84,7 @@ describe("BudgetWidget", () => {
   });
 
   it("opens budget input on button click", async () => {
-    mockInvoke.mockImplementation((cmd) => {
+    mockInvoke.mockImplementation(cmd => {
       if (cmd === "tokens_week") return Promise.resolve([]);
       if (cmd === "settings_get") return Promise.resolve(noopSettings);
       return Promise.resolve(null);
@@ -92,7 +96,7 @@ describe("BudgetWidget", () => {
   });
 
   it("saves budget on Save click", async () => {
-    mockInvoke.mockImplementation((cmd) => {
+    mockInvoke.mockImplementation(cmd => {
       if (cmd === "tokens_week") return Promise.resolve([]);
       if (cmd === "settings_get") return Promise.resolve(noopSettings);
       if (cmd === "settings_set") return Promise.resolve(null);
@@ -106,12 +110,12 @@ describe("BudgetWidget", () => {
     await waitFor(() =>
       expect(mockInvoke).toHaveBeenCalledWith("settings_set", {
         settings: { ...noopSettings, budget_usd_daily: 10 },
-      }),
+      })
     );
   });
 
   it("subscribes to tokens.updated and settings.changed", async () => {
-    mockInvoke.mockImplementation((cmd) => {
+    mockInvoke.mockImplementation(cmd => {
       if (cmd === "tokens_week") return Promise.resolve([]);
       if (cmd === "settings_get") return Promise.resolve(noopSettings);
       return Promise.resolve(null);

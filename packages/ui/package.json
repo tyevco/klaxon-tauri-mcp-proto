@@ -9,7 +9,7 @@
     "preview": "vite preview --port 1420",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "lint": "echo \"(add eslint later)\""
+    "lint": "eslint src"
   },
   "dependencies": {
     "@klaxon/protocol": "workspace:*",

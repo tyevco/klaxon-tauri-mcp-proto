@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
 use klaxon_tauri_mcp_proto_lib::{
-    mcp_http::start_mcp_server,
-    store::KlaxonStore,
-    timer_store::TimerStore,
+    mcp_http::start_mcp_server, store::KlaxonStore, timer_store::TimerStore,
     token_store::TokenStore,
 };
 
@@ -59,7 +57,8 @@ async fn read_resource(
     bearer: &str,
     uri: &str,
 ) -> serde_json::Value {
-    let resp = rpc(client, base_url, bearer, "resources/read", serde_json::json!({ "uri": uri })).await;
+    let resp =
+        rpc(client, base_url, bearer, "resources/read", serde_json::json!({ "uri": uri })).await;
     let result = result_of(resp);
     let text = result["contents"][0]["text"].as_str().expect("text field");
     serde_json::from_str(text).expect("parse resource text as json")
@@ -104,7 +103,9 @@ async fn post_rejects_missing_auth() {
     let client = reqwest::Client::new();
     let status = client
         .post(format!("{}/mcp", base_url))
-        .json(&serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }))
+        .json(
+            &serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
+        )
         .send()
         .await
         .expect("send")
@@ -119,7 +120,9 @@ async fn post_rejects_wrong_bearer() {
     let status = client
         .post(format!("{}/mcp", base_url))
         .header("Authorization", "Bearer wrong_token")
-        .json(&serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }))
+        .json(
+            &serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
+        )
         .send()
         .await
         .expect("send")
@@ -189,9 +192,16 @@ async fn notify_creates_item_in_open() {
     let (base_url, bearer, _dir) = spawn_server().await;
     let client = reqwest::Client::new();
     let resp = rpc(
-        &client, &base_url, &bearer, "tools/call",
-        call("klaxon.notify", serde_json::json!({ "level": "warning", "title": "Hey", "message": "Hello" })),
-    ).await;
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
+        call(
+            "klaxon.notify",
+            serde_json::json!({ "level": "warning", "title": "Hey", "message": "Hello" }),
+        ),
+    )
+    .await;
     result_of(resp);
 
     let items = read_resource(&client, &base_url, &bearer, "klaxon/open").await;
@@ -207,9 +217,13 @@ async fn notify_missing_message() {
     let (base_url, bearer, _dir) = spawn_server().await;
     let client = reqwest::Client::new();
     let resp = rpc(
-        &client, &base_url, &bearer, "tools/call",
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
         call("klaxon.notify", serde_json::json!({ "level": "info", "title": "Hi" })),
-    ).await;
+    )
+    .await;
     assert_eq!(resp["error"]["code"].as_i64().unwrap(), -32602);
 }
 
@@ -218,9 +232,16 @@ async fn notify_invalid_level() {
     let (base_url, bearer, _dir) = spawn_server().await;
     let client = reqwest::Client::new();
     let resp = rpc(
-        &client, &base_url, &bearer, "tools/call",
-        call("klaxon.notify", serde_json::json!({ "level": "critical", "title": "Hi", "message": "x" })),
-    ).await;
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
+        call(
+            "klaxon.notify",
+            serde_json::json!({ "level": "critical", "title": "Hi", "message": "x" }),
+        ),
+    )
+    .await;
     assert_eq!(resp["error"]["code"].as_i64().unwrap(), -32602);
 }
 
@@ -229,9 +250,16 @@ async fn notify_ttl_expires_on_read() {
     let (base_url, bearer, _dir) = spawn_server().await;
     let client = reqwest::Client::new();
     rpc(
-        &client, &base_url, &bearer, "tools/call",
-        call("klaxon.notify", serde_json::json!({ "level": "info", "title": "Expires", "message": "x", "ttl_ms": 1 })),
-    ).await;
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
+        call(
+            "klaxon.notify",
+            serde_json::json!({ "level": "info", "title": "Expires", "message": "x", "ttl_ms": 1 }),
+        ),
+    )
+    .await;
 
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
@@ -244,9 +272,16 @@ async fn notify_item_resource_by_id() {
     let (base_url, bearer, _dir) = spawn_server().await;
     let client = reqwest::Client::new();
     let resp = rpc(
-        &client, &base_url, &bearer, "tools/call",
-        call("klaxon.notify", serde_json::json!({ "level": "success", "title": "Done", "message": "yes" })),
-    ).await;
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
+        call(
+            "klaxon.notify",
+            serde_json::json!({ "level": "success", "title": "Done", "message": "yes" }),
+        ),
+    )
+    .await;
     let result = result_of(resp);
     let id = result["id"].as_str().expect("id in result");
 
@@ -263,15 +298,23 @@ async fn ack_removes_non_form_item() {
     let (base_url, bearer, _dir) = spawn_server().await;
     let client = reqwest::Client::new();
     let resp = rpc(
-        &client, &base_url, &bearer, "tools/call",
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
         call("klaxon.notify", serde_json::json!({ "level": "info", "title": "T", "message": "m" })),
-    ).await;
+    )
+    .await;
     let id = result_of(resp)["id"].as_str().unwrap().to_string();
 
     rpc(
-        &client, &base_url, &bearer, "tools/call",
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
         call("klaxon.ack", serde_json::json!({ "id": id })),
-    ).await;
+    )
+    .await;
 
     let items = read_resource(&client, &base_url, &bearer, "klaxon/open").await;
     assert_eq!(items.as_array().unwrap().len(), 0);
@@ -281,10 +324,9 @@ async fn ack_removes_non_form_item() {
 async fn ack_missing_id_param() {
     let (base_url, bearer, _dir) = spawn_server().await;
     let client = reqwest::Client::new();
-    let resp = rpc(
-        &client, &base_url, &bearer, "tools/call",
-        call("klaxon.ack", serde_json::json!({})),
-    ).await;
+    let resp =
+        rpc(&client, &base_url, &bearer, "tools/call", call("klaxon.ack", serde_json::json!({})))
+            .await;
     assert_eq!(resp["error"]["code"].as_i64().unwrap(), -32602);
 }
 
@@ -293,9 +335,13 @@ async fn ack_invalid_uuid() {
     let (base_url, bearer, _dir) = spawn_server().await;
     let client = reqwest::Client::new();
     let resp = rpc(
-        &client, &base_url, &bearer, "tools/call",
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
         call("klaxon.ack", serde_json::json!({ "id": "not-a-uuid" })),
-    ).await;
+    )
+    .await;
     assert_eq!(resp["error"]["code"].as_i64().unwrap(), -32602);
 }
 
@@ -304,15 +350,23 @@ async fn dismiss_removes_item() {
     let (base_url, bearer, _dir) = spawn_server().await;
     let client = reqwest::Client::new();
     let resp = rpc(
-        &client, &base_url, &bearer, "tools/call",
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
         call("klaxon.notify", serde_json::json!({ "level": "info", "title": "T", "message": "m" })),
-    ).await;
+    )
+    .await;
     let id = result_of(resp)["id"].as_str().unwrap().to_string();
 
     rpc(
-        &client, &base_url, &bearer, "tools/call",
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
         call("klaxon.dismiss", serde_json::json!({ "id": id })),
-    ).await;
+    )
+    .await;
 
     let items = read_resource(&client, &base_url, &bearer, "klaxon/open").await;
     assert_eq!(items.as_array().unwrap().len(), 0);
@@ -323,24 +377,35 @@ async fn ack_form_item_stays_open() {
     let (base_url, bearer, _dir) = spawn_server().await;
     let client = reqwest::Client::new();
     let resp = rpc(
-        &client, &base_url, &bearer, "tools/call",
-        call("klaxon.ask", serde_json::json!({
-            "level": "info",
-            "title": "Q",
-            "message": "?",
-            "form": {
-                "id": "f1",
-                "title": "Form",
-                "fields": [{ "type": "text", "id": "ans", "label": "Answer" }]
-            }
-        })),
-    ).await;
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
+        call(
+            "klaxon.ask",
+            serde_json::json!({
+                "level": "info",
+                "title": "Q",
+                "message": "?",
+                "form": {
+                    "id": "f1",
+                    "title": "Form",
+                    "fields": [{ "type": "text", "id": "ans", "label": "Answer" }]
+                }
+            }),
+        ),
+    )
+    .await;
     let id = result_of(resp)["id"].as_str().unwrap().to_string();
 
     rpc(
-        &client, &base_url, &bearer, "tools/call",
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
         call("klaxon.ack", serde_json::json!({ "id": id })),
-    ).await;
+    )
+    .await;
 
     let items = read_resource(&client, &base_url, &bearer, "klaxon/open").await;
     assert_eq!(items.as_array().unwrap().len(), 1, "form item should remain open after ack");
@@ -355,18 +420,25 @@ async fn ask_creates_item_with_form() {
     let (base_url, bearer, _dir) = spawn_server().await;
     let client = reqwest::Client::new();
     rpc(
-        &client, &base_url, &bearer, "tools/call",
-        call("klaxon.ask", serde_json::json!({
-            "level": "info",
-            "title": "Q",
-            "message": "Please answer",
-            "form": {
-                "id": "f1",
-                "title": "Survey",
-                "fields": [{ "type": "text", "id": "name", "label": "Name" }]
-            }
-        })),
-    ).await;
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
+        call(
+            "klaxon.ask",
+            serde_json::json!({
+                "level": "info",
+                "title": "Q",
+                "message": "Please answer",
+                "form": {
+                    "id": "f1",
+                    "title": "Survey",
+                    "fields": [{ "type": "text", "id": "name", "label": "Name" }]
+                }
+            }),
+        ),
+    )
+    .await;
 
     let items = read_resource(&client, &base_url, &bearer, "klaxon/open").await;
     let arr = items.as_array().unwrap();
@@ -380,9 +452,13 @@ async fn ask_missing_form() {
     let (base_url, bearer, _dir) = spawn_server().await;
     let client = reqwest::Client::new();
     let resp = rpc(
-        &client, &base_url, &bearer, "tools/call",
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
         call("klaxon.ask", serde_json::json!({ "level": "info", "title": "Q", "message": "?" })),
-    ).await;
+    )
+    .await;
     assert_eq!(resp["error"]["code"].as_i64().unwrap(), -32602);
 }
 
@@ -391,14 +467,21 @@ async fn answer_resource_null_before_answer() {
     let (base_url, bearer, _dir) = spawn_server().await;
     let client = reqwest::Client::new();
     let resp = rpc(
-        &client, &base_url, &bearer, "tools/call",
-        call("klaxon.ask", serde_json::json!({
-            "level": "info",
-            "title": "Q",
-            "message": "?",
-            "form": { "id": "f1", "title": "F", "fields": [] }
-        })),
-    ).await;
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
+        call(
+            "klaxon.ask",
+            serde_json::json!({
+                "level": "info",
+                "title": "Q",
+                "message": "?",
+                "form": { "id": "f1", "title": "F", "fields": [] }
+            }),
+        ),
+    )
+    .await;
     let id = result_of(resp)["id"].as_str().unwrap().to_string();
 
     let answer = read_resource(&client, &base_url, &bearer, &format!("klaxon/answer/{}", id)).await;
@@ -414,9 +497,13 @@ async fn timer_start_and_active_resource() {
     let (base_url, bearer, _dir) = spawn_server().await;
     let client = reqwest::Client::new();
     let resp = rpc(
-        &client, &base_url, &bearer, "tools/call",
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
         call("timer.start", serde_json::json!({ "issue": "PROJ-1" })),
-    ).await;
+    )
+    .await;
     result_of(resp);
 
     let active = read_resource(&client, &base_url, &bearer, "timer/active").await;
@@ -428,13 +515,21 @@ async fn timer_double_start_error() {
     let (base_url, bearer, _dir) = spawn_server().await;
     let client = reqwest::Client::new();
     rpc(
-        &client, &base_url, &bearer, "tools/call",
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
         call("timer.start", serde_json::json!({ "issue": "PROJ-1" })),
-    ).await;
+    )
+    .await;
     let resp = rpc(
-        &client, &base_url, &bearer, "tools/call",
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
         call("timer.start", serde_json::json!({ "issue": "PROJ-1" })),
-    ).await;
+    )
+    .await;
     assert_eq!(resp["error"]["code"].as_i64().unwrap(), -32602);
 }
 
@@ -443,13 +538,16 @@ async fn timer_stop_clears_active() {
     let (base_url, bearer, _dir) = spawn_server().await;
     let client = reqwest::Client::new();
     rpc(
-        &client, &base_url, &bearer, "tools/call",
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
         call("timer.start", serde_json::json!({ "issue": "PROJ-1" })),
-    ).await;
-    let resp = rpc(
-        &client, &base_url, &bearer, "tools/call",
-        call("timer.stop", serde_json::json!({})),
-    ).await;
+    )
+    .await;
+    let resp =
+        rpc(&client, &base_url, &bearer, "tools/call", call("timer.stop", serde_json::json!({})))
+            .await;
     let result = result_of(resp);
     assert_eq!(result["ok"].as_bool().unwrap(), true);
     assert_eq!(result["entry"]["issue_id"].as_str().unwrap(), "PROJ-1");
@@ -464,9 +562,23 @@ async fn timer_today_summary() {
     let (base_url, bearer, _dir) = spawn_server().await;
     let client = reqwest::Client::new();
 
-    rpc(&client, &base_url, &bearer, "tools/call", call("timer.start", serde_json::json!({ "issue": "PROJ-1" }))).await;
+    rpc(
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
+        call("timer.start", serde_json::json!({ "issue": "PROJ-1" })),
+    )
+    .await;
     rpc(&client, &base_url, &bearer, "tools/call", call("timer.stop", serde_json::json!({}))).await;
-    rpc(&client, &base_url, &bearer, "tools/call", call("timer.start", serde_json::json!({ "issue": "PROJ-2" }))).await;
+    rpc(
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
+        call("timer.start", serde_json::json!({ "issue": "PROJ-2" })),
+    )
+    .await;
     rpc(&client, &base_url, &bearer, "tools/call", call("timer.stop", serde_json::json!({}))).await;
 
     let summary = read_resource(&client, &base_url, &bearer, "timer/today").await;
@@ -481,13 +593,21 @@ async fn timer_switch() {
     let (base_url, bearer, _dir) = spawn_server().await;
     let client = reqwest::Client::new();
     rpc(
-        &client, &base_url, &bearer, "tools/call",
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
         call("timer.start", serde_json::json!({ "issue": "PROJ-1" })),
-    ).await;
+    )
+    .await;
     let resp = rpc(
-        &client, &base_url, &bearer, "tools/call",
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
         call("timer.switch", serde_json::json!({ "issue": "PROJ-2" })),
-    ).await;
+    )
+    .await;
     let result = result_of(resp);
     assert_eq!(result["stopped"]["issue_id"].as_str().unwrap(), "PROJ-1");
 
@@ -499,10 +619,9 @@ async fn timer_switch() {
 async fn timer_stop_no_active() {
     let (base_url, bearer, _dir) = spawn_server().await;
     let client = reqwest::Client::new();
-    let resp = rpc(
-        &client, &base_url, &bearer, "tools/call",
-        call("timer.stop", serde_json::json!({})),
-    ).await;
+    let resp =
+        rpc(&client, &base_url, &bearer, "tools/call", call("timer.stop", serde_json::json!({})))
+            .await;
     let result = result_of(resp);
     assert_eq!(result["ok"].as_bool().unwrap(), true);
     assert!(result["entry"].is_null());
@@ -512,10 +631,9 @@ async fn timer_stop_no_active() {
 async fn timer_start_missing_issue() {
     let (base_url, bearer, _dir) = spawn_server().await;
     let client = reqwest::Client::new();
-    let resp = rpc(
-        &client, &base_url, &bearer, "tools/call",
-        call("timer.start", serde_json::json!({})),
-    ).await;
+    let resp =
+        rpc(&client, &base_url, &bearer, "tools/call", call("timer.start", serde_json::json!({})))
+            .await;
     assert_eq!(resp["error"]["code"].as_i64().unwrap(), -32602);
 }
 
@@ -528,13 +646,20 @@ async fn tokens_add_and_read() {
     let (base_url, bearer, _dir) = spawn_server().await;
     let client = reqwest::Client::new();
     rpc(
-        &client, &base_url, &bearer, "tools/call",
-        call("tokens.add", serde_json::json!({
-            "model": "claude-sonnet-4-6",
-            "input_tokens": 100,
-            "output_tokens": 50
-        })),
-    ).await;
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
+        call(
+            "tokens.add",
+            serde_json::json!({
+                "model": "claude-sonnet-4-6",
+                "input_tokens": 100,
+                "output_tokens": 50
+            }),
+        ),
+    )
+    .await;
 
     let totals = read_resource(&client, &base_url, &bearer, "tokens/today").await;
     let arr = totals.as_array().unwrap();
@@ -549,13 +674,27 @@ async fn tokens_accumulate() {
     let (base_url, bearer, _dir) = spawn_server().await;
     let client = reqwest::Client::new();
     rpc(
-        &client, &base_url, &bearer, "tools/call",
-        call("tokens.add", serde_json::json!({ "model": "m", "input_tokens": 100, "output_tokens": 40 })),
-    ).await;
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
+        call(
+            "tokens.add",
+            serde_json::json!({ "model": "m", "input_tokens": 100, "output_tokens": 40 }),
+        ),
+    )
+    .await;
     rpc(
-        &client, &base_url, &bearer, "tools/call",
-        call("tokens.add", serde_json::json!({ "model": "m", "input_tokens": 50, "output_tokens": 20 })),
-    ).await;
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
+        call(
+            "tokens.add",
+            serde_json::json!({ "model": "m", "input_tokens": 50, "output_tokens": 20 }),
+        ),
+    )
+    .await;
 
     let totals = read_resource(&client, &base_url, &bearer, "tokens/today").await;
     let arr = totals.as_array().unwrap();
@@ -568,9 +707,13 @@ async fn tokens_missing_model() {
     let (base_url, bearer, _dir) = spawn_server().await;
     let client = reqwest::Client::new();
     let resp = rpc(
-        &client, &base_url, &bearer, "tools/call",
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
         call("tokens.add", serde_json::json!({ "input_tokens": 10, "output_tokens": 5 })),
-    ).await;
+    )
+    .await;
     assert_eq!(resp["error"]["code"].as_i64().unwrap(), -32602);
 }
 
@@ -579,13 +722,27 @@ async fn tokens_multiple_models() {
     let (base_url, bearer, _dir) = spawn_server().await;
     let client = reqwest::Client::new();
     rpc(
-        &client, &base_url, &bearer, "tools/call",
-        call("tokens.add", serde_json::json!({ "model": "model-a", "input_tokens": 10, "output_tokens": 5 })),
-    ).await;
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
+        call(
+            "tokens.add",
+            serde_json::json!({ "model": "model-a", "input_tokens": 10, "output_tokens": 5 }),
+        ),
+    )
+    .await;
     rpc(
-        &client, &base_url, &bearer, "tools/call",
-        call("tokens.add", serde_json::json!({ "model": "model-b", "input_tokens": 20, "output_tokens": 8 })),
-    ).await;
+        &client,
+        &base_url,
+        &bearer,
+        "tools/call",
+        call(
+            "tokens.add",
+            serde_json::json!({ "model": "model-b", "input_tokens": 20, "output_tokens": 8 }),
+        ),
+    )
+    .await;
 
     let totals = read_resource(&client, &base_url, &bearer, "tokens/today").await;
     assert_eq!(totals.as_array().unwrap().len(), 2);
@@ -629,8 +786,12 @@ async fn unknown_resource_uri() {
     let (base_url, bearer, _dir) = spawn_server().await;
     let client = reqwest::Client::new();
     let resp = rpc(
-        &client, &base_url, &bearer, "resources/read",
+        &client,
+        &base_url,
+        &bearer,
+        "resources/read",
         serde_json::json!({ "uri": "no/such/resource" }),
-    ).await;
+    )
+    .await;
     assert_eq!(resp["error"]["code"].as_i64().unwrap(), -32602);
 }

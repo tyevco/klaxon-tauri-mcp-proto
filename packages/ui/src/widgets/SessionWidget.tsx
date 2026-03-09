@@ -3,10 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { SessionSummary } from "@klaxon/protocol";
 import { DraggablePanel } from "../components/DraggablePanel";
-
-function fmtUSD(v: number): string {
-  return v >= 1 ? `$${v.toFixed(2)}` : `$${v.toFixed(4)}`;
-}
+import { relTime, fmtUSD } from "../utils";
 
 function elapsed(startIso: string): string {
   const s = Math.floor((Date.now() - new Date(startIso).getTime()) / 1000);
@@ -14,14 +11,6 @@ function elapsed(startIso: string): string {
   const m = Math.floor((s % 3600) / 60);
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
-}
-
-function relTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const m = Math.floor(diff / 60000);
-  if (m < 1) return "just now";
-  if (m < 60) return `${m}m ago`;
-  return `${Math.floor(m / 60)}h ago`;
 }
 
 export function SessionWidget() {
@@ -46,7 +35,10 @@ export function SessionWidget() {
       listen("tokens.updated", () => refresh()),
     ];
     const interval = setInterval(() => setTick(t => t + 1), 10000);
-    return () => { unlisten.forEach(p => p.then(u => u())); clearInterval(interval); };
+    return () => {
+      unlisten.forEach(p => p.then(u => u()));
+      clearInterval(interval);
+    };
   }, []);
 
   async function endSession() {
@@ -60,9 +52,14 @@ export function SessionWidget() {
   }
 
   const pillStyle: React.CSSProperties = {
-    display: "inline-flex", alignItems: "center", gap: 5,
-    background: "var(--card)", border: "1px solid var(--border)",
-    borderRadius: 20, padding: "4px 10px", fontSize: 12,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
+    background: "var(--card)",
+    border: "1px solid var(--border)",
+    borderRadius: 20,
+    padding: "4px 10px",
+    fontSize: 12,
   };
 
   return (
@@ -85,7 +82,9 @@ export function SessionWidget() {
               summary.active_timers.map(t => (
                 <div key={t.issue_id} style={{ ...pillStyle, borderColor: "var(--info)" }}>
                   <span>⏱</span>
-                  <span>{t.issue_id} ({elapsed(t.start)})</span>
+                  <span>
+                    {t.issue_id} ({elapsed(t.start)})
+                  </span>
                 </div>
               ))
             ) : (
@@ -95,7 +94,12 @@ export function SessionWidget() {
               </div>
             )}
 
-            <div style={{ ...pillStyle, borderColor: summary.today_cost > 0 ? "var(--warn)" : "var(--border)" }}>
+            <div
+              style={{
+                ...pillStyle,
+                borderColor: summary.today_cost > 0 ? "var(--warn)" : "var(--border)",
+              }}
+            >
               <span>💰</span>
               <span>{fmtUSD(summary.today_cost)} today</span>
             </div>
@@ -117,9 +121,15 @@ export function SessionWidget() {
             onClick={endSession}
             disabled={ending}
             style={{
-              width: "100%", padding: "7px", borderRadius: 8, cursor: ending ? "default" : "pointer",
+              width: "100%",
+              padding: "7px",
+              borderRadius: 8,
+              cursor: ending ? "default" : "pointer",
               background: ending ? "var(--border)" : "var(--danger)",
-              border: "none", color: "#fff", fontSize: 13, fontWeight: 600,
+              border: "none",
+              color: "#fff",
+              fontSize: 13,
+              fontWeight: 600,
               opacity: ending ? 0.6 : 1,
             }}
           >

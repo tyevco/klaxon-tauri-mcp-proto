@@ -44,9 +44,7 @@ describe("TimerWidget", () => {
   });
 
   it("shows active indicator and pause button for running entry", async () => {
-    setupToday([
-      { issue_id: "PROJ-1", seconds: 60, active_since: new Date().toISOString() },
-    ]);
+    setupToday([{ issue_id: "PROJ-1", seconds: 60, active_since: new Date().toISOString() }]);
     render(<TimerWidget />);
     await waitFor(() => expect(screen.getByText("PROJ-1")).toBeInTheDocument());
     expect(screen.getByText("●")).toBeInTheDocument();
@@ -61,14 +59,12 @@ describe("TimerWidget", () => {
   });
 
   it("pause button calls timer_stop with issueId", async () => {
-    setupToday([
-      { issue_id: "PROJ-1", seconds: 0, active_since: new Date().toISOString() },
-    ]);
+    setupToday([{ issue_id: "PROJ-1", seconds: 0, active_since: new Date().toISOString() }]);
     render(<TimerWidget />);
     await waitFor(() => screen.getByText("⏸"));
     fireEvent.click(screen.getByText("⏸"));
     await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith("timer_stop", { issueId: "PROJ-1" }),
+      expect(mockInvoke).toHaveBeenCalledWith("timer_stop", { issueId: "PROJ-1" })
     );
   });
 
@@ -78,7 +74,7 @@ describe("TimerWidget", () => {
     await waitFor(() => screen.getByText("▶"));
     fireEvent.click(screen.getByText("▶"));
     await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith("timer_start", { issueId: "PROJ-2" }),
+      expect(mockInvoke).toHaveBeenCalledWith("timer_start", { issueId: "PROJ-2" })
     );
   });
 
@@ -89,7 +85,7 @@ describe("TimerWidget", () => {
     fireEvent.change(screen.getByPlaceholderText("PROJ-123"), { target: { value: "PROJ-42" } });
     fireEvent.click(screen.getByText("Start"));
     await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith("timer_start", { issueId: "PROJ-42" }),
+      expect(mockInvoke).toHaveBeenCalledWith("timer_start", { issueId: "PROJ-42" })
     );
   });
 
@@ -101,7 +97,7 @@ describe("TimerWidget", () => {
     fireEvent.change(input, { target: { value: "PROJ-5" } });
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith("timer_start", { issueId: "PROJ-5" }),
+      expect(mockInvoke).toHaveBeenCalledWith("timer_start", { issueId: "PROJ-5" })
     );
   });
 
@@ -122,8 +118,6 @@ describe("TimerWidget", () => {
   it("subscribes to timer.updated", async () => {
     setupToday([]);
     render(<TimerWidget />);
-    await waitFor(() =>
-      expect(listen).toHaveBeenCalledWith("timer.updated", expect.any(Function)),
-    );
+    await waitFor(() => expect(listen).toHaveBeenCalledWith("timer.updated", expect.any(Function)));
   });
 });

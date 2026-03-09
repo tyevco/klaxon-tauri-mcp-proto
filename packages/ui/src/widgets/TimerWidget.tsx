@@ -3,14 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { IssueSummary } from "@klaxon/protocol";
 import { DraggablePanel } from "../components/DraggablePanel";
-
-function formatSeconds(s: number): string {
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
-  return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
-}
+import { fmtSeconds } from "../utils";
 
 export function TimerWidget() {
   const [today, setToday] = useState<IssueSummary[]>([]);
@@ -25,7 +18,9 @@ export function TimerWidget() {
   useEffect(() => {
     refresh();
     const unsub = listen("timer.updated", () => refresh());
-    return () => { unsub.then(u => u()); };
+    return () => {
+      unsub.then(u => u());
+    };
   }, []);
 
   // Tick every second while any timer is active.
@@ -56,9 +51,7 @@ export function TimerWidget() {
   return (
     <DraggablePanel id="timer" title="Time Tracker" width={300}>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {today.length === 0 && (
-          <div style={{ fontSize: 13, opacity: 0.7 }}>No active timer.</div>
-        )}
+        {today.length === 0 && <div style={{ fontSize: 13, opacity: 0.7 }}>No active timer.</div>}
 
         {today.length > 0 && (
           <div>
@@ -69,18 +62,28 @@ export function TimerWidget() {
                 ? s.seconds + Math.floor((Date.now() - new Date(s.active_since!).getTime()) / 1000)
                 : s.seconds;
               return (
-                <div key={s.issue_id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0" }}>
+                <div
+                  key={s.issue_id}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0" }}
+                >
                   <button onClick={() => handleToggle(s.issue_id, isActive)} style={iconBtnStyle()}>
                     {isActive ? "⏸" : "▶"}
                   </button>
                   <span style={{ flex: 1, fontSize: 13 }}>{s.issue_id}</span>
                   {isActive && (
-                    <span style={{ fontSize: 10, color: "var(--ok)", fontWeight: 700, letterSpacing: "0.04em" }}>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        color: "var(--ok)",
+                        fontWeight: 700,
+                        letterSpacing: "0.04em",
+                      }}
+                    >
                       ●
                     </span>
                   )}
                   <span style={{ opacity: 0.8, fontVariantNumeric: "tabular-nums", fontSize: 13 }}>
-                    {formatSeconds(liveSeconds)}
+                    {fmtSeconds(liveSeconds)}
                   </span>
                 </div>
               );
@@ -94,9 +97,13 @@ export function TimerWidget() {
             placeholder="PROJ-123"
             value={input}
             onChange={e => setInput(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") handleStart(); }}
+            onKeyDown={e => {
+              if (e.key === "Enter") handleStart();
+            }}
           />
-          <button onClick={handleStart} style={btnStyle()}>Start</button>
+          <button onClick={handleStart} style={btnStyle()}>
+            Start
+          </button>
         </div>
       </div>
     </DraggablePanel>

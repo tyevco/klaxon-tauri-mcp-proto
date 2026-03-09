@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { TimerReportWidget } from "../widgets/TimerReportWidget";
@@ -21,9 +21,7 @@ describe("TimerReportWidget", () => {
   it("renders empty state", async () => {
     mockInvoke.mockResolvedValue([]);
     render(<TimerReportWidget />);
-    await waitFor(() =>
-      expect(screen.getByText("No timer data this week.")).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText("No timer data this week.")).toBeInTheDocument());
   });
 
   it("renders issue row", async () => {
@@ -65,9 +63,7 @@ describe("TimerReportWidget", () => {
   it("subscribes to timer.updated", async () => {
     mockInvoke.mockResolvedValue([]);
     render(<TimerReportWidget />);
-    await waitFor(() =>
-      expect(listen).toHaveBeenCalledWith("timer.updated", expect.any(Function)),
-    );
+    await waitFor(() => expect(listen).toHaveBeenCalledWith("timer.updated", expect.any(Function)));
   });
 
   it("calls timer_week command", async () => {

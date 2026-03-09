@@ -72,7 +72,7 @@ describe("FormFieldSchema", () => {
     { id: "f11", type: "diffapproval", label: "Diff" },
   ] as const;
 
-  it.each(allTypes)("all 11 field types parse without error: $type", (field) => {
+  it.each(allTypes)("all 11 field types parse without error: $type", field => {
     expect(() => FormFieldSchema.parse(field)).not.toThrow();
   });
 });
@@ -109,9 +109,9 @@ describe("KlaxonItemSchema", () => {
 
   it.each(["info", "warning", "error", "success"] as const)(
     "accepts all 4 valid level values: %s",
-    (level) => {
+    level => {
       expect(() => KlaxonItemSchema.parse({ ...minimalItem, level })).not.toThrow();
-    },
+    }
   );
 });
 
@@ -126,7 +126,12 @@ describe("KlaxonActionSchema", () => {
   });
 
   it("parses open_url action", () => {
-    const result = KlaxonActionSchema.parse({ id: "a2", kind: "open_url", label: "Visit", url: "https://example.com" });
+    const result = KlaxonActionSchema.parse({
+      id: "a2",
+      kind: "open_url",
+      label: "Visit",
+      url: "https://example.com",
+    });
     expect(result.kind).toBe("open_url");
   });
 
@@ -164,7 +169,7 @@ describe("TimerEntrySchema", () => {
 
   it("rejects TimerEntrySchema missing end", () => {
     expect(() =>
-      TimerEntrySchema.parse({ issue_id: "PROJ-1", start: new Date().toISOString(), seconds: 0 }),
+      TimerEntrySchema.parse({ issue_id: "PROJ-1", start: new Date().toISOString(), seconds: 0 })
     ).toThrow();
   });
 });

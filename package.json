@@ -2,9 +2,15 @@
   "name": "klaxon-root",
   "private": true,
   "version": "0.1.0",
+  "type": "module",
   "packageManager": "pnpm@9.0.0",
   "devDependencies": {
-    "@tauri-apps/cli": "^2"
+    "@tauri-apps/cli": "^2",
+    "eslint": "^9.39.4",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "prettier": "^3.8.1",
+    "typescript-eslint": "^8.56.1"
   },
   "scripts": {
     "dev": "pnpm --filter @klaxon/ui dev",
@@ -14,10 +20,16 @@
     "tauri:dev": "pnpm --filter @klaxon/ui dev -- --port 1420 & tauri dev",
     "typecheck": "pnpm --filter @klaxon/protocol build && pnpm -r typecheck",
     "check": "pnpm --filter @klaxon/protocol build && pnpm -r typecheck && cargo check --manifest-path src-tauri/Cargo.toml",
+    "lint": "eslint \"packages/*/src/**/*.{ts,tsx}\"",
+    "lint:fix": "eslint --fix \"packages/*/src/**/*.{ts,tsx}\"",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings",
+    "format:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml",
+    "format:rust:check": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check",
     "test:ts": "pnpm --filter @klaxon/protocol build && pnpm -r --filter @klaxon/protocol --filter @klaxon/ui test",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test": "pnpm test:ts && pnpm test:rust",
-    "ci": "pnpm check && pnpm test",
-    "lint": "pnpm -r lint"
+    "ci": "pnpm format:check && pnpm lint && pnpm check && pnpm test && pnpm format:rust:check && pnpm lint:rust"
   }
 }

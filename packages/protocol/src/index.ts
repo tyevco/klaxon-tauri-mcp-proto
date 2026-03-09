@@ -6,7 +6,7 @@ import { z } from "zod";
  */
 
 export const FormOptionSchema = z.object({
-  label: z.string(),
+  label: z.string().optional(),
   value: z.string(),
 });
 
@@ -103,8 +103,9 @@ export const FormFieldSchema = z.discriminatedUnion("type", [
     type: z.literal("diffapproval"),
     label: z.string(),
     required: z.boolean().optional(),
-    summary: z.string().optional(),
-    diff: z.string().optional(),
+    diff: z.string(),
+    approve_label: z.string().optional(),
+    reject_label: z.string().optional(),
   }),
   z.object({
     type: z.literal("rating"),
@@ -164,8 +165,8 @@ export const FormSchemaSchema = z.object({
   description: z.string().optional(),
   fields: z.array(FormFieldSchema).default([]),
   pages: z.array(FormPageSchema).default([]),
-  submitLabel: z.string().optional(),
-  cancelLabel: z.string().optional(),
+  submit_label: z.string().optional(),
+  cancel_label: z.string().optional(),
 });
 
 export type FormSchema = z.infer<typeof FormSchemaSchema>;
@@ -203,6 +204,8 @@ export const KlaxonItemSchema = z.object({
   status: z.enum(["open", "answered", "dismissed", "expired"]).default("open"),
   form: FormSchemaSchema.optional(),
   actions: z.array(KlaxonActionSchema).optional(),
+  answered_at: z.string().optional(),
+  response: z.any().optional(),
 });
 
 export type KlaxonItem = z.infer<typeof KlaxonItemSchema>;
@@ -381,6 +384,16 @@ export const WorkItemSchema = z.object({
 });
 
 export type WorkItem = z.infer<typeof WorkItemSchema>;
+
+// --- App settings ---
+
+export const AppSettingsSchema = z.object({
+  theme: z.string(),
+  mcp_preferred_port: z.number().int(),
+  budget_usd_daily: z.number(),
+});
+
+export type AppSettings = z.infer<typeof AppSettingsSchema>;
 
 // --- Session summary ---
 

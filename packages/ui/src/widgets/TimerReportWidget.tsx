@@ -3,14 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { WeekEntry } from "@klaxon/protocol";
 import { DraggablePanel } from "../components/DraggablePanel";
-
-function fmtSeconds(s: number): string {
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  if (h > 0) return `${h}h${m > 0 ? `${m}m` : ""}`;
-  if (m > 0) return `${m}m`;
-  return `${s}s`;
-}
+import { fmtSeconds, dayLabel } from "../utils";
 
 function last7Days(): string[] {
   const days: string[] = [];
@@ -22,12 +15,12 @@ function last7Days(): string[] {
   return days;
 }
 
-function dayLabel(iso: string): string {
-  const d = new Date(iso + "T00:00:00");
-  return ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"][d.getDay()];
-}
-
-const cellStyle: React.CSSProperties = { fontSize: 11, textAlign: "center", padding: "3px 6px", minWidth: 36 };
+const cellStyle: React.CSSProperties = {
+  fontSize: 11,
+  textAlign: "center",
+  padding: "3px 6px",
+  minWidth: 36,
+};
 const headerStyle: React.CSSProperties = { ...cellStyle, fontWeight: 700, opacity: 0.6 };
 
 export function TimerReportWidget() {
@@ -44,7 +37,9 @@ export function TimerReportWidget() {
   useEffect(() => {
     refresh();
     const unsub = listen("timer.updated", () => refresh());
-    return () => { unsub.then(u => u()); };
+    return () => {
+      unsub.then(u => u());
+    };
   }, []);
 
   const days = last7Days();
@@ -60,7 +55,9 @@ export function TimerReportWidget() {
     total: days.reduce((s, d) => s + (lookup.get(`${id}|${d}`) ?? 0), 0),
   }));
 
-  const colTotals = days.map(d => entries.filter(e => e.date === d).reduce((s, e) => s + e.seconds, 0));
+  const colTotals = days.map(d =>
+    entries.filter(e => e.date === d).reduce((s, e) => s + e.seconds, 0)
+  );
   const grandTotal = colTotals.reduce((a, b) => a + b, 0);
 
   function copyText() {
@@ -72,7 +69,12 @@ export function TimerReportWidget() {
       });
       lines.push(`${id}\t${row.join("\t")}\t${fmtSeconds(total)}`);
     }
-    lines.push("Total\t" + colTotals.map(s => s > 0 ? fmtSeconds(s) : "").join("\t") + "\t" + fmtSeconds(grandTotal));
+    lines.push(
+      "Total\t" +
+        colTotals.map(s => (s > 0 ? fmtSeconds(s) : "")).join("\t") +
+        "\t" +
+        fmtSeconds(grandTotal)
+    );
     navigator.clipboard.writeText(lines.join("\n")).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
@@ -90,7 +92,11 @@ export function TimerReportWidget() {
               <thead>
                 <tr>
                   <th style={{ ...headerStyle, textAlign: "left", minWidth: 80 }}>Issue</th>
-                  {days.map(d => <th key={d} style={headerStyle}>{dayLabel(d)}</th>)}
+                  {days.map(d => (
+                    <th key={d} style={headerStyle}>
+                      {dayLabel(d)}
+                    </th>
+                  ))}
                   <th style={headerStyle}>Total</th>
                 </tr>
               </thead>
@@ -112,9 +118,14 @@ export function TimerReportWidget() {
               </tbody>
               <tfoot>
                 <tr style={{ borderTop: "2px solid var(--border)" }}>
-                  <td style={{ ...cellStyle, textAlign: "left", fontWeight: 700, opacity: 0.6 }}>Total</td>
+                  <td style={{ ...cellStyle, textAlign: "left", fontWeight: 700, opacity: 0.6 }}>
+                    Total
+                  </td>
                   {colTotals.map((s, i) => (
-                    <td key={i} style={{ ...cellStyle, fontWeight: 700, opacity: s > 0 ? 1 : 0.25 }}>
+                    <td
+                      key={i}
+                      style={{ ...cellStyle, fontWeight: 700, opacity: s > 0 ? 1 : 0.25 }}
+                    >
                       {s > 0 ? fmtSeconds(s) : "—"}
                     </td>
                   ))}
@@ -127,8 +138,13 @@ export function TimerReportWidget() {
             <button
               onClick={copyText}
               style={{
-                fontSize: 11, padding: "4px 10px", borderRadius: 6, cursor: "pointer",
-                background: "var(--card)", border: "1px solid var(--border)", color: "var(--text)",
+                fontSize: 11,
+                padding: "4px 10px",
+                borderRadius: 6,
+                cursor: "pointer",
+                background: "var(--card)",
+                border: "1px solid var(--border)",
+                color: "var(--text)",
               }}
             >
               {copied ? "Copied!" : "Copy as text"}

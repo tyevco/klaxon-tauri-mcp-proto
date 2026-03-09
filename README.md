@@ -9,6 +9,7 @@ A Tauri desktop HUD with overlay widgets:
 ## Dev
 
 Prereqs:
+
 - Node + pnpm
 - Rust toolchain
 - Tauri v2 prerequisites for your OS

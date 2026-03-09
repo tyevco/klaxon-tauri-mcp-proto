@@ -24,10 +24,26 @@ function isLinear(pages: FormPage[]): boolean {
   return pages.every(p => !p.next || p.next.kind === "end" || p.next.kind === "fixed");
 }
 
-function ProgressDots({ pages, currentId, history }: { pages: FormPage[]; currentId: string; history: string[] }) {
+function ProgressDots({
+  pages,
+  currentId,
+  history,
+}: {
+  pages: FormPage[];
+  currentId: string;
+  history: string[];
+}) {
   const visited = new Set([...history, currentId]);
   return (
-    <div style={{ display: "flex", gap: 5, alignItems: "center", justifyContent: "center", marginBottom: 12 }}>
+    <div
+      style={{
+        display: "flex",
+        gap: 5,
+        alignItems: "center",
+        justifyContent: "center",
+        marginBottom: 12,
+      }}
+    >
       {pages.map(p => {
         const isCurrent = p.id === currentId;
         const isVisited = visited.has(p.id);
@@ -38,7 +54,11 @@ function ProgressDots({ pages, currentId, history }: { pages: FormPage[]; curren
               height: 6,
               width: isCurrent ? 20 : 8,
               borderRadius: 99,
-              background: isCurrent ? "var(--info)" : isVisited ? "rgba(90,169,255,0.5)" : "var(--border)",
+              background: isCurrent
+                ? "var(--info)"
+                : isVisited
+                  ? "rgba(90,169,255,0.5)"
+                  : "var(--border)",
               transition: "width 0.2s",
             }}
           />
@@ -52,7 +72,7 @@ export function FormWidget() {
   const [wizard, setWizard] = useState<WizardState | null>(null);
 
   useEffect(() => {
-    const u1 = listen<{ id: string }>("form.open", async (event) => {
+    const u1 = listen<{ id: string }>("form.open", async event => {
       const { id } = event.payload;
       try {
         const raw = await invoke("klaxon_get_item", { id });
@@ -74,7 +94,7 @@ export function FormWidget() {
       }
     });
 
-    const u2 = listen<{ id: string }>("klaxon.answered", (event) => {
+    const u2 = listen<{ id: string }>("klaxon.answered", event => {
       setWizard(prev => {
         if (prev && prev.itemId === event.payload.id) return null;
         return prev;
@@ -125,7 +145,7 @@ export function FormWidget() {
     const next = currentPage.next;
 
     // No next, end, or last page → submit
-    if (!next || next.kind === "end" || !next) {
+    if (!next || next.kind === "end") {
       await doSubmit();
       return;
     }
@@ -185,10 +205,13 @@ export function FormWidget() {
     setWizard(null);
   }
 
-  const isLastPage = !currentPage.next || currentPage.next.kind === "end"
-    || (currentPage.next.kind !== "conditional" && !wizard.pages.find(p => p.id === (currentPage.next as any).page_id));
-  const submitLabel = wizard.form.submitLabel ?? "Submit";
-  const cancelLabel = wizard.form.cancelLabel ?? "Cancel";
+  const isLastPage =
+    !currentPage.next ||
+    currentPage.next.kind === "end" ||
+    (currentPage.next.kind !== "conditional" &&
+      !wizard.pages.find(p => p.id === (currentPage.next as any).page_id));
+  const submitLabel = wizard.form.submit_label ?? "Submit";
+  const cancelLabel = wizard.form.cancel_label ?? "Cancel";
 
   const title = wizard.form.title || "Form";
 
@@ -199,7 +222,11 @@ export function FormWidget() {
       )}
 
       {linear && totalPages > 1 && (
-        <ProgressDots pages={wizard.pages} currentId={wizard.currentPageId} history={wizard.history} />
+        <ProgressDots
+          pages={wizard.pages}
+          currentId={wizard.currentPageId}
+          history={wizard.history}
+        />
       )}
       {!linear && (
         <div style={{ fontSize: 11, opacity: 0.55, marginBottom: 10, textAlign: "center" }}>
@@ -231,11 +258,15 @@ export function FormWidget() {
       <div style={{ display: "flex", gap: 8, marginTop: 14, justifyContent: "space-between" }}>
         <div style={{ display: "flex", gap: 8 }}>
           {wizard.history.length > 0 && (
-            <button onClick={handleBack} style={btnStyle()}>Back</button>
+            <button onClick={handleBack} style={btnStyle()}>
+              Back
+            </button>
           )}
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={handleCancel} style={btnStyle()}>{cancelLabel}</button>
+          <button onClick={handleCancel} style={btnStyle()}>
+            {cancelLabel}
+          </button>
           <button onClick={handleNext} style={primaryBtnStyle()}>
             {isLastPage ? submitLabel : "Next →"}
           </button>

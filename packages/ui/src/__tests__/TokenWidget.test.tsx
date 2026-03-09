@@ -19,9 +19,7 @@ describe("TokenWidget", () => {
   it("renders empty state", async () => {
     mockInvoke.mockResolvedValue([]);
     render(<TokenWidget />);
-    await waitFor(() =>
-      expect(screen.getByText("No token usage today.")).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText("No token usage today.")).toBeInTheDocument());
   });
 
   it("renders model row with formatted token counts", async () => {
@@ -80,7 +78,7 @@ describe("TokenWidget", () => {
     mockInvoke.mockResolvedValue([]);
     render(<TokenWidget />);
     await waitFor(() =>
-      expect(listen).toHaveBeenCalledWith("tokens.updated", expect.any(Function)),
+      expect(listen).toHaveBeenCalledWith("tokens.updated", expect.any(Function))
     );
   });
 });

@@ -20,7 +20,9 @@ export function DraggablePanel({ id, width = 360, children, title }: Props) {
     const el = panelRef.current;
     if (!el) return;
     const observer = new ResizeObserver(() => {
-      invoke("resize_window", { label: id, width: el.offsetWidth, height: el.offsetHeight }).catch(() => {});
+      invoke("resize_window", { label: id, width: el.offsetWidth, height: el.offsetHeight }).catch(
+        () => {}
+      );
     });
     observer.observe(el);
     return () => observer.disconnect();
@@ -29,7 +31,7 @@ export function DraggablePanel({ id, width = 360, children, title }: Props) {
   // Handle native popup menu selections routed back from Rust.
   useEffect(() => {
     if (typeof (window as any).__TAURI_INTERNALS__ === "undefined") return;
-    const unsub = listen<{ action: string }>("panel.menu", (event) => {
+    const unsub = listen<{ action: string }>("panel.menu", event => {
       if (event.payload.action === "minimize") {
         invoke("hide_panel", { label: id }).catch(() => {});
       } else if (event.payload.action === "pin") {
@@ -38,7 +40,9 @@ export function DraggablePanel({ id, width = 360, children, title }: Props) {
         invoke("set_panel_always_on_top", { label: id, onTop: next }).catch(() => {});
       }
     });
-    return () => { unsub.then(u => u()); };
+    return () => {
+      unsub.then(u => u());
+    };
   }, [id]);
 
   function onHeaderMouseDown(e: React.MouseEvent) {
@@ -66,7 +70,7 @@ export function DraggablePanel({ id, width = 360, children, title }: Props) {
   return (
     <div
       ref={panelRef}
-      onContextMenu={(e) => e.preventDefault()}
+      onContextMenu={e => e.preventDefault()}
       style={{
         width,
         background: "var(--bg)",
@@ -91,12 +95,31 @@ export function DraggablePanel({ id, width = 360, children, title }: Props) {
           cursor: "default",
         }}
       >
-        <div style={{ flex: 1, fontWeight: 700, fontSize: 12, opacity: 0.85, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        <div
+          style={{
+            flex: 1,
+            fontWeight: 700,
+            fontSize: 12,
+            opacity: 0.85,
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
           {title ?? id}
         </div>
-        <div style={{ display: "flex", gap: 2, flexShrink: 0 }} onMouseDown={(e) => e.stopPropagation()}>
-          <button onClick={handleMinimize} style={toolbarBtnStyle()} title="Minimize">–</button>
-          <button onClick={togglePin} style={toolbarBtnStyle()} title={pinned ? "Unpin window" : "Pin window on top"}>
+        <div
+          style={{ display: "flex", gap: 2, flexShrink: 0 }}
+          onMouseDown={e => e.stopPropagation()}
+        >
+          <button onClick={handleMinimize} style={toolbarBtnStyle()} title="Minimize">
+            –
+          </button>
+          <button
+            onClick={togglePin}
+            style={toolbarBtnStyle()}
+            title={pinned ? "Unpin window" : "Pin window on top"}
+          >
             {pinned ? "📌" : "📍"}
           </button>
         </div>

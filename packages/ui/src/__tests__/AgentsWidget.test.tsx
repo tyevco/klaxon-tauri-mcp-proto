@@ -21,9 +21,7 @@ describe("AgentsWidget", () => {
   it("renders empty state", async () => {
     mockInvoke.mockResolvedValue([]);
     render(<AgentsWidget />);
-    await waitFor(() =>
-      expect(screen.getByText("No agents connected yet.")).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText("No agents connected yet.")).toBeInTheDocument());
   });
 
   it("renders agent client_id", async () => {
@@ -43,9 +41,7 @@ describe("AgentsWidget", () => {
   });
 
   it("renders calls_today count", async () => {
-    mockInvoke.mockResolvedValue([
-      { client_id: "agent-y", last_seen: now, calls_today: 42 },
-    ]);
+    mockInvoke.mockResolvedValue([{ client_id: "agent-y", last_seen: now, calls_today: 42 }]);
     render(<AgentsWidget />);
     await waitFor(() => expect(screen.getByText("42 calls today")).toBeInTheDocument());
   });
@@ -61,9 +57,7 @@ describe("AgentsWidget", () => {
   });
 
   it("does not show last_tool when absent", async () => {
-    mockInvoke.mockResolvedValue([
-      { client_id: "agent-z", last_seen: now, calls_today: 0 },
-    ]);
+    mockInvoke.mockResolvedValue([{ client_id: "agent-z", last_seen: now, calls_today: 0 }]);
     render(<AgentsWidget />);
     await waitFor(() => expect(screen.getByText("agent-z")).toBeInTheDocument());
     expect(screen.queryByText(/Last:/)).not.toBeInTheDocument();
@@ -73,7 +67,7 @@ describe("AgentsWidget", () => {
     mockInvoke.mockResolvedValue([]);
     render(<AgentsWidget />);
     await waitFor(() =>
-      expect(listen).toHaveBeenCalledWith("agents.updated", expect.any(Function)),
+      expect(listen).toHaveBeenCalledWith("agents.updated", expect.any(Function))
     );
   });
 

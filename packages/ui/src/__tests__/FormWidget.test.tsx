@@ -85,7 +85,10 @@ const conditionalItem = {
             id: "path",
             type: "radio",
             label: "Which way?",
-            options: [{ value: "a", label: "Option A" }, { value: "b", label: "Option B" }],
+            options: [
+              { value: "a", label: "Option A" },
+              { value: "b", label: "Option B" },
+            ],
           },
         ],
         next: {
@@ -174,7 +177,7 @@ describe("FormWidget", () => {
       expect(mockInvoke).toHaveBeenCalledWith("klaxon_answer", {
         id: singlePageItem.id,
         response: expect.objectContaining({ name: "Alice" }),
-      }),
+      })
     );
     expect(mockInvoke).toHaveBeenCalledWith("hide_panel", { label: "form" });
   });
@@ -186,9 +189,7 @@ describe("FormWidget", () => {
     await waitFor(() => screen.getByText("Cancel"));
 
     fireEvent.click(screen.getByText("Cancel"));
-    await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith("hide_panel", { label: "form" }),
-    );
+    await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith("hide_panel", { label: "form" }));
   });
 
   it("multi-page wizard shows Next and navigates to page 2", async () => {

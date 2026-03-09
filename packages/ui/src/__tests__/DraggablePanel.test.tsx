@@ -28,30 +28,53 @@ describe("DraggablePanel", () => {
   });
 
   it("header mousedown calls start_panel_drag invoke", () => {
-    render(<DraggablePanel id="test-panel" title="My Panel"><span /></DraggablePanel>);
+    render(
+      <DraggablePanel id="test-panel" title="My Panel">
+        <span />
+      </DraggablePanel>
+    );
     fireEvent.mouseDown(screen.getByText("My Panel"), { button: 0 });
     expect(mockInvoke).toHaveBeenCalledWith("start_panel_drag");
   });
 
   it("right-click on header does not drag", () => {
-    render(<DraggablePanel id="test-panel" title="My Panel"><span /></DraggablePanel>);
+    render(
+      <DraggablePanel id="test-panel" title="My Panel">
+        <span />
+      </DraggablePanel>
+    );
     fireEvent.mouseDown(screen.getByText("My Panel"), { button: 2 });
     expect(mockInvoke).not.toHaveBeenCalledWith("start_panel_drag");
   });
 
   it("right-click on title bar calls show_panel_menu", () => {
-    render(<DraggablePanel id="test-panel" title="My Panel"><span /></DraggablePanel>);
+    render(
+      <DraggablePanel id="test-panel" title="My Panel">
+        <span />
+      </DraggablePanel>
+    );
     fireEvent.contextMenu(screen.getByText("My Panel"));
-    expect(mockInvoke).toHaveBeenCalledWith("show_panel_menu", { label: "test-panel", pinned: true });
+    expect(mockInvoke).toHaveBeenCalledWith("show_panel_menu", {
+      label: "test-panel",
+      pinned: true,
+    });
   });
 
   it("pin button renders initially as pinned", () => {
-    render(<DraggablePanel id="test-panel"><span /></DraggablePanel>);
+    render(
+      <DraggablePanel id="test-panel">
+        <span />
+      </DraggablePanel>
+    );
     expect(screen.getByTitle("Unpin window").textContent).toBe("📌");
   });
 
   it("pin button click calls set_panel_always_on_top with onTop: false", async () => {
-    render(<DraggablePanel id="test-panel"><span /></DraggablePanel>);
+    render(
+      <DraggablePanel id="test-panel">
+        <span />
+      </DraggablePanel>
+    );
     fireEvent.click(screen.getByTitle("Unpin window"));
     await waitFor(() =>
       expect(mockInvoke).toHaveBeenCalledWith("set_panel_always_on_top", {
@@ -63,7 +86,11 @@ describe("DraggablePanel", () => {
   });
 
   it("second click toggles back to pinned", async () => {
-    render(<DraggablePanel id="test-panel"><span /></DraggablePanel>);
+    render(
+      <DraggablePanel id="test-panel">
+        <span />
+      </DraggablePanel>
+    );
     fireEvent.click(screen.getByTitle("Unpin window"));
     await waitFor(() => expect(screen.getByTitle("Pin window on top")).toBeInTheDocument());
     fireEvent.click(screen.getByTitle("Pin window on top"));
@@ -77,12 +104,20 @@ describe("DraggablePanel", () => {
   });
 
   it("minimize button is present", () => {
-    render(<DraggablePanel id="test-panel"><span /></DraggablePanel>);
+    render(
+      <DraggablePanel id="test-panel">
+        <span />
+      </DraggablePanel>
+    );
     expect(screen.getByTitle("Minimize")).toBeInTheDocument();
   });
 
   it("subscribes to panel.menu event", async () => {
-    render(<DraggablePanel id="test-panel"><span /></DraggablePanel>);
+    render(
+      <DraggablePanel id="test-panel">
+        <span />
+      </DraggablePanel>
+    );
     // listen is skipped in jsdom (no __TAURI_INTERNALS__), but no error thrown
     expect(listen).not.toHaveBeenCalled();
   });

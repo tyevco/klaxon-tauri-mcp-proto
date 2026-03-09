@@ -3,15 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { AgentInfo } from "@klaxon/protocol";
 import { DraggablePanel } from "../components/DraggablePanel";
-
-function relTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const s = Math.floor(diff / 1000);
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  return `${Math.floor(m / 60)}h ago`;
-}
+import { relTime } from "../utils";
 
 function dotColor(lastSeenIso: string): string {
   const s = Math.floor((Date.now() - new Date(lastSeenIso).getTime()) / 1000);
@@ -35,7 +27,10 @@ export function AgentsWidget() {
     refresh();
     const unsub = listen("agents.updated", () => refresh());
     const interval = setInterval(() => setTick(t => t + 1), 5000);
-    return () => { unsub.then(u => u()); clearInterval(interval); };
+    return () => {
+      unsub.then(u => u());
+      clearInterval(interval);
+    };
   }, []);
 
   return (
@@ -45,19 +40,47 @@ export function AgentsWidget() {
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {agents.map(a => (
-            <div key={a.client_id} style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8, padding: "7px 10px" }}>
+            <div
+              key={a.client_id}
+              style={{
+                background: "var(--card)",
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+                padding: "7px 10px",
+              }}
+            >
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <div style={{
-                  width: 8, height: 8, borderRadius: "50%",
-                  background: dotColor(a.last_seen), flexShrink: 0,
-                }} />
-                <span style={{ flex: 1, fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <div
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: "50%",
+                    background: dotColor(a.last_seen),
+                    flexShrink: 0,
+                  }}
+                />
+                <span
+                  style={{
+                    flex: 1,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
                   {a.client_id}
                 </span>
-                <span style={{ fontSize: 10, opacity: 0.5, whiteSpace: "nowrap" }}>{relTime(a.last_seen)}</span>
+                <span style={{ fontSize: 10, opacity: 0.5, whiteSpace: "nowrap" }}>
+                  {relTime(a.last_seen)}
+                </span>
               </div>
               <div style={{ display: "flex", gap: 8, marginTop: 4, fontSize: 11, opacity: 0.7 }}>
-                {a.last_tool && <span>Last: <code>{a.last_tool}</code></span>}
+                {a.last_tool && (
+                  <span>
+                    Last: <code>{a.last_tool}</code>
+                  </span>
+                )}
                 <span style={{ marginLeft: "auto" }}>{a.calls_today} calls today</span>
               </div>
             </div>

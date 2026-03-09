@@ -6,7 +6,7 @@ import { DraggablePanel } from "../components/DraggablePanel";
 
 const STREAM_COLORS: Record<string, string> = {
   stderr: "var(--danger)",
-  info:   "var(--info)",
+  info: "var(--info)",
   stdout: "var(--text)",
 };
 
@@ -37,8 +37,10 @@ export function LogTailWidget() {
   useEffect(() => {
     refresh();
     const u1 = listen("logtail.updated", () => refresh());
-    return () => { u1.then(u => u()); };
-  }, [streamFilter, paused]);
+    return () => {
+      u1.then(u => u());
+    };
+  }, [streamFilter]);
 
   useEffect(() => {
     if (autoScroll) {
@@ -50,12 +52,17 @@ export function LogTailWidget() {
 
   return (
     <DraggablePanel id="logtail" title="Log Tail" width={540}>
-      <div style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center", flexWrap: "wrap" }}>
+      <div
+        style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center", flexWrap: "wrap" }}
+      >
         <div style={{ display: "flex", gap: 4, flex: 1, flexWrap: "wrap" }}>
           <button
             onClick={() => setStreamFilter("")}
             style={{
-              fontSize: 10, padding: "2px 8px", borderRadius: 10, cursor: "pointer",
+              fontSize: 10,
+              padding: "2px 8px",
+              borderRadius: 10,
+              cursor: "pointer",
               background: !streamFilter ? "var(--info)" : "var(--card)",
               border: `1px solid ${!streamFilter ? "var(--info)" : "var(--border)"}`,
               color: !streamFilter ? "#fff" : "var(--text)",
@@ -68,7 +75,10 @@ export function LogTailWidget() {
               key={s}
               onClick={() => setStreamFilter(s)}
               style={{
-                fontSize: 10, padding: "2px 8px", borderRadius: 10, cursor: "pointer",
+                fontSize: 10,
+                padding: "2px 8px",
+                borderRadius: 10,
+                cursor: "pointer",
                 background: streamFilter === s ? "var(--info)" : "var(--card)",
                 border: `1px solid ${streamFilter === s ? "var(--info)" : "var(--border)"}`,
                 color: streamFilter === s ? "#fff" : "var(--text)",
@@ -78,14 +88,23 @@ export function LogTailWidget() {
             </button>
           ))}
         </div>
-        <label style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 11, cursor: "pointer" }}>
-          <input type="checkbox" checked={autoScroll} onChange={e => setAutoScroll(e.target.checked)} />
+        <label
+          style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 11, cursor: "pointer" }}
+        >
+          <input
+            type="checkbox"
+            checked={autoScroll}
+            onChange={e => setAutoScroll(e.target.checked)}
+          />
           Auto-scroll
         </label>
         <button
           onClick={() => setPaused(p => !p)}
           style={{
-            fontSize: 11, padding: "2px 8px", borderRadius: 6, cursor: "pointer",
+            fontSize: 11,
+            padding: "2px 8px",
+            borderRadius: 6,
+            cursor: "pointer",
             background: paused ? "var(--warn)" : "var(--card)",
             border: `1px solid ${paused ? "var(--warn)" : "var(--border)"}`,
             color: paused ? "#fff" : "var(--text)",
@@ -94,37 +113,58 @@ export function LogTailWidget() {
           {paused ? "Resume" : "Pause"}
         </button>
         <button
-          onClick={async () => { await invoke("logtail_clear"); setLines([]); }}
+          onClick={async () => {
+            await invoke("logtail_clear");
+            setLines([]);
+          }}
           style={{
-            fontSize: 11, padding: "2px 8px", borderRadius: 6, cursor: "pointer",
-            background: "var(--card)", border: "1px solid var(--border)", color: "var(--text)",
+            fontSize: 11,
+            padding: "2px 8px",
+            borderRadius: 6,
+            cursor: "pointer",
+            background: "var(--card)",
+            border: "1px solid var(--border)",
+            color: "var(--text)",
           }}
         >
           Clear
         </button>
       </div>
 
-      <div style={{
-        overflowY: "auto", maxHeight: 400, fontFamily: "monospace", fontSize: 11,
-        background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6,
-        padding: "6px 8px",
-      }}>
+      <div
+        style={{
+          overflowY: "auto",
+          maxHeight: 400,
+          fontFamily: "monospace",
+          fontSize: 11,
+          background: "var(--bg)",
+          border: "1px solid var(--border)",
+          borderRadius: 6,
+          padding: "6px 8px",
+        }}
+      >
         {lines.length === 0 ? (
-          <span style={{ opacity: 0.4 }}>No log output yet. Agents can stream lines via logtail.append.</span>
-        ) : lines.map((l, i) => (
-          <div key={i} style={{ display: "flex", gap: 8, lineHeight: 1.5 }}>
-            <span style={{ opacity: 0.35, flexShrink: 0, fontSize: 10 }}>
-              {new Date(l.ts).toLocaleTimeString()}
-            </span>
-            <span style={{
-              opacity: l.stream === "stderr" ? 1 : 0.7,
-              color: streamColor(l.stream),
-              wordBreak: "break-all",
-            }}>
-              {l.line}
-            </span>
-          </div>
-        ))}
+          <span style={{ opacity: 0.4 }}>
+            No log output yet. Agents can stream lines via logtail.append.
+          </span>
+        ) : (
+          lines.map((l, i) => (
+            <div key={i} style={{ display: "flex", gap: 8, lineHeight: 1.5 }}>
+              <span style={{ opacity: 0.35, flexShrink: 0, fontSize: 10 }}>
+                {new Date(l.ts).toLocaleTimeString()}
+              </span>
+              <span
+                style={{
+                  opacity: l.stream === "stderr" ? 1 : 0.7,
+                  color: streamColor(l.stream),
+                  wordBreak: "break-all",
+                }}
+              >
+                {l.line}
+              </span>
+            </div>
+          ))
+        )}
         <div ref={bottomRef} />
       </div>
       <div style={{ fontSize: 10, opacity: 0.4, marginTop: 4 }}>{lines.length} lines</div>

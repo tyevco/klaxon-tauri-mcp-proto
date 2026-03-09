@@ -56,9 +56,7 @@ describe("KlaxonWidget", () => {
     render(<KlaxonWidget />);
     await waitFor(() => screen.getByText("Test Alert"));
     fireEvent.click(screen.getAllByText("Ack")[0]);
-    await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith("klaxon_ack", { id: baseItem.id }),
-    );
+    await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith("klaxon_ack", { id: baseItem.id }));
     await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith("klaxon_list_open"));
   });
 
@@ -68,7 +66,7 @@ describe("KlaxonWidget", () => {
     await waitFor(() => screen.getByText("Test Alert"));
     fireEvent.click(screen.getAllByText("Dismiss")[0]);
     await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith("klaxon_dismiss", { id: baseItem.id }),
+      expect(mockInvoke).toHaveBeenCalledWith("klaxon_dismiss", { id: baseItem.id })
     );
   });
 
@@ -85,7 +83,7 @@ describe("KlaxonWidget", () => {
     await waitFor(() => screen.getByText("Open Form"));
     fireEvent.click(screen.getByText("Open Form"));
     await waitFor(() =>
-      expect(mockInvoke).toHaveBeenCalledWith("klaxon_open_form", { id: formItem.id }),
+      expect(mockInvoke).toHaveBeenCalledWith("klaxon_open_form", { id: formItem.id })
     );
   });
 
@@ -109,7 +107,9 @@ describe("KlaxonWidget", () => {
   it("subscribes to klaxon.updated and klaxon.created events", async () => {
     mockInvoke.mockResolvedValue([]);
     render(<KlaxonWidget />);
-    await waitFor(() => expect(listen).toHaveBeenCalledWith("klaxon.updated", expect.any(Function)));
+    await waitFor(() =>
+      expect(listen).toHaveBeenCalledWith("klaxon.updated", expect.any(Function))
+    );
     expect(listen).toHaveBeenCalledWith("klaxon.created", expect.any(Function));
   });
 });
