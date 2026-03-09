@@ -1,9 +1,19 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { ToolCallEntry } from "@klaxon/protocol";
 import { DraggablePanel } from "../components/DraggablePanel";
 import { relTime } from "../utils";
+import { useTauriEvent } from "../hooks/useTauriEvent";
+
+const SMALL_BTN_STYLE: React.CSSProperties = {
+  fontSize: 11,
+  padding: "3px 8px",
+  borderRadius: 6,
+  cursor: "pointer",
+  background: "var(--card)",
+  border: "1px solid var(--border)",
+  color: "var(--text)",
+};
 
 export function ToolLogWidget() {
   const [entries, setEntries] = useState<ToolCallEntry[]>([]);
@@ -13,24 +23,36 @@ export function ToolLogWidget() {
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     if (pausedRef.current) return;
     try {
       const raw = await invoke<ToolCallEntry[]>("toollog_recent", { n: 200 });
       setEntries((raw ?? []).reverse()); // newest first
-    } catch {}
-  }
+    } catch (err) {
+      console.error("[ToolLogWidget] refresh failed:", err);
+    }
+  }, []);
 
   useEffect(() => {
     refresh();
-    const u1 = listen("toollog.updated", () => refresh());
-    return () => {
-      u1.then(u => u());
-    };
-  }, [paused]);
+  }, [refresh]);
 
-  const tools = [...new Set(entries.map(e => e.tool))];
-  const filtered = toolFilter ? entries.filter(e => e.tool === toolFilter) : entries;
+  useTauriEvent("toollog.updated", refresh, [paused]);
+
+  const tools = useMemo(() => [...new Set(entries.map(e => e.tool))], [entries]);
+  const filtered = useMemo(
+    () => (toolFilter ? entries.filter(e => e.tool === toolFilter) : entries),
+    [entries, toolFilter],
+  );
+
+  const handleClear = useCallback(async () => {
+    try {
+      await invoke("toollog_clear");
+      setEntries([]);
+    } catch (err) {
+      console.error("[ToolLogWidget] clear failed:", err);
+    }
+  }, []);
 
   return (
     <DraggablePanel id="toollog" title="Tool Log" width={540}>
@@ -60,10 +82,7 @@ export function ToolLogWidget() {
         <button
           onClick={() => setPaused(p => !p)}
           style={{
-            fontSize: 11,
-            padding: "3px 8px",
-            borderRadius: 6,
-            cursor: "pointer",
+            ...SMALL_BTN_STYLE,
             background: paused ? "var(--warn)" : "var(--card)",
             border: `1px solid ${paused ? "var(--warn)" : "var(--border)"}`,
             color: paused ? "#fff" : "var(--text)",
@@ -71,21 +90,7 @@ export function ToolLogWidget() {
         >
           {paused ? "Resume" : "Pause"}
         </button>
-        <button
-          onClick={async () => {
-            await invoke("toollog_clear");
-            setEntries([]);
-          }}
-          style={{
-            fontSize: 11,
-            padding: "3px 8px",
-            borderRadius: 6,
-            cursor: "pointer",
-            background: "var(--card)",
-            border: "1px solid var(--border)",
-            color: "var(--text)",
-          }}
-        >
+        <button onClick={handleClear} style={SMALL_BTN_STYLE}>
           Clear
         </button>
       </div>
@@ -104,79 +109,14 @@ export function ToolLogWidget() {
         ) : (
           filtered.map(e => {
             const eKey = `${e.called_at}-${e.tool}-${e.client_id}`;
-            const isExpanded = expanded === eKey;
             return (
-              <div
+              <ToolLogEntry
                 key={eKey}
-                style={{
-                  background: "var(--card)",
-                  border: "1px solid var(--border)",
-                  borderRadius: 6,
-                  padding: "5px 8px",
-                  borderLeft: `3px solid ${e.ok ? "var(--ok)" : "var(--danger)"}`,
-                  cursor: "pointer",
-                }}
-                onClick={() => setExpanded(isExpanded ? null : eKey)}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 600,
-                      fontFamily: "monospace",
-                      color: e.ok ? "var(--ok)" : "var(--danger)",
-                      flexShrink: 0,
-                    }}
-                  >
-                    {e.ok ? "✓" : "✗"}
-                  </span>
-                  <span style={{ flex: 1, fontSize: 12, fontFamily: "monospace", fontWeight: 600 }}>
-                    {e.tool}
-                  </span>
-                  <span style={{ fontSize: 10, opacity: 0.5 }}>{e.duration_ms}ms</span>
-                  <span style={{ fontSize: 10, opacity: 0.4, whiteSpace: "nowrap" }}>
-                    {relTime(e.called_at)}
-                  </span>
-                </div>
-                {!isExpanded && (
-                  <div
-                    style={{
-                      fontSize: 10,
-                      opacity: 0.55,
-                      marginTop: 2,
-                      fontFamily: "monospace",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {e.args_summary}
-                  </div>
-                )}
-                {isExpanded && (
-                  <div style={{ marginTop: 6, fontSize: 11 }}>
-                    <div style={{ opacity: 0.6, marginBottom: 3 }}>
-                      Client: <code>{e.client_id || "unknown"}</code>
-                    </div>
-                    <div
-                      style={{
-                        fontFamily: "monospace",
-                        padding: "4px 6px",
-                        background: "var(--bg)",
-                        borderRadius: 4,
-                        wordBreak: "break-all",
-                      }}
-                    >
-                      {e.args_summary}
-                    </div>
-                    {e.error && (
-                      <div style={{ color: "var(--danger)", marginTop: 4, fontSize: 11 }}>
-                        Error: {e.error}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
+                entry={e}
+                eKey={eKey}
+                isExpanded={expanded === eKey}
+                onToggle={() => setExpanded(expanded === eKey ? null : eKey)}
+              />
             );
           })
         )}
@@ -184,3 +124,88 @@ export function ToolLogWidget() {
     </DraggablePanel>
   );
 }
+
+const ToolLogEntry = React.memo(function ToolLogEntry({
+  entry: e,
+  eKey,
+  isExpanded,
+  onToggle,
+}: {
+  entry: ToolCallEntry;
+  eKey: string;
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div
+      style={{
+        background: "var(--card)",
+        border: "1px solid var(--border)",
+        borderRadius: 6,
+        padding: "5px 8px",
+        borderLeft: `3px solid ${e.ok ? "var(--ok)" : "var(--danger)"}`,
+        cursor: "pointer",
+      }}
+      onClick={onToggle}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 600,
+            fontFamily: "monospace",
+            color: e.ok ? "var(--ok)" : "var(--danger)",
+            flexShrink: 0,
+          }}
+        >
+          {e.ok ? "✓" : "✗"}
+        </span>
+        <span style={{ flex: 1, fontSize: 12, fontFamily: "monospace", fontWeight: 600 }}>
+          {e.tool}
+        </span>
+        <span style={{ fontSize: 10, opacity: 0.5 }}>{e.duration_ms}ms</span>
+        <span style={{ fontSize: 10, opacity: 0.4, whiteSpace: "nowrap" }}>
+          {relTime(e.called_at)}
+        </span>
+      </div>
+      {!isExpanded && (
+        <div
+          style={{
+            fontSize: 10,
+            opacity: 0.55,
+            marginTop: 2,
+            fontFamily: "monospace",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {e.args_summary}
+        </div>
+      )}
+      {isExpanded && (
+        <div style={{ marginTop: 6, fontSize: 11 }}>
+          <div style={{ opacity: 0.6, marginBottom: 3 }}>
+            Client: <code>{e.client_id || "unknown"}</code>
+          </div>
+          <div
+            style={{
+              fontFamily: "monospace",
+              padding: "4px 6px",
+              background: "var(--bg)",
+              borderRadius: 4,
+              wordBreak: "break-all",
+            }}
+          >
+            {e.args_summary}
+          </div>
+          {e.error && (
+            <div style={{ color: "var(--danger)", marginTop: 4, fontSize: 11 }}>
+              Error: {e.error}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+});

@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { SessionSummary } from "@klaxon/protocol";
 import { DraggablePanel } from "../components/DraggablePanel";
 import { relTime, fmtUSD } from "../utils";
+import { useTauriEvents } from "../hooks/useTauriEvent";
 
 function elapsed(startIso: string): string {
   const s = Math.floor((Date.now() - new Date(startIso).getTime()) / 1000);
@@ -13,54 +13,56 @@ function elapsed(startIso: string): string {
   return `${m}m`;
 }
 
+const PILL_STYLE: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 5,
+  background: "var(--card)",
+  border: "1px solid var(--border)",
+  borderRadius: 20,
+  padding: "4px 10px",
+  fontSize: 12,
+};
+
 export function SessionWidget() {
   const [summary, setSummary] = useState<SessionSummary | null>(null);
   const [ending, setEnding] = useState(false);
   const [, setTick] = useState(0);
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     try {
       const s = await invoke<SessionSummary>("session_summary");
       setSummary(s);
-    } catch {}
-  }
+    } catch (err) {
+      console.error("[SessionWidget] refresh failed:", err);
+    }
+  }, []);
 
   useEffect(() => {
     refresh();
-    const unlisten = [
-      listen("klaxon.created", () => refresh()),
-      listen("klaxon.updated", () => refresh()),
-      listen("klaxon.answered", () => refresh()),
-      listen("timer.updated", () => refresh()),
-      listen("tokens.updated", () => refresh()),
-    ];
     const interval = setInterval(() => setTick(t => t + 1), 10000);
-    return () => {
-      unlisten.forEach(p => p.then(u => u()));
-      clearInterval(interval);
-    };
-  }, []);
+    return () => clearInterval(interval);
+  }, [refresh]);
 
-  async function endSession() {
+  useTauriEvents([
+    { event: "klaxon.created", handler: refresh },
+    { event: "klaxon.updated", handler: refresh },
+    { event: "klaxon.answered", handler: refresh },
+    { event: "timer.updated", handler: refresh },
+    { event: "tokens.updated", handler: refresh },
+  ]);
+
+  const endSession = useCallback(async () => {
     setEnding(true);
     try {
       await invoke("session_end");
       await refresh();
+    } catch (err) {
+      console.error("[SessionWidget] endSession failed:", err);
     } finally {
       setEnding(false);
     }
-  }
-
-  const pillStyle: React.CSSProperties = {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 5,
-    background: "var(--card)",
-    border: "1px solid var(--border)",
-    borderRadius: 20,
-    padding: "4px 10px",
-    fontSize: 12,
-  };
+  }, [refresh]);
 
   return (
     <DraggablePanel id="session" title="Session" width={440}>
@@ -69,7 +71,7 @@ export function SessionWidget() {
       ) : (
         <>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
-            <div style={pillStyle}>
+            <div style={PILL_STYLE}>
               <span style={{ opacity: summary.open_count > 0 ? 1 : 0.4 }}>
                 {summary.open_count > 0 ? "🔔" : "✓"}
               </span>
@@ -80,7 +82,7 @@ export function SessionWidget() {
 
             {summary.active_timers.length > 0 ? (
               summary.active_timers.map(t => (
-                <div key={t.issue_id} style={{ ...pillStyle, borderColor: "var(--info)" }}>
+                <div key={t.issue_id} style={{ ...PILL_STYLE, borderColor: "var(--info)" }}>
                   <span>⏱</span>
                   <span>
                     {t.issue_id} ({elapsed(t.start)})
@@ -88,7 +90,7 @@ export function SessionWidget() {
                 </div>
               ))
             ) : (
-              <div style={{ ...pillStyle, opacity: 0.5 }}>
+              <div style={{ ...PILL_STYLE, opacity: 0.5 }}>
                 <span>⏱</span>
                 <span>No active timer</span>
               </div>
@@ -96,7 +98,7 @@ export function SessionWidget() {
 
             <div
               style={{
-                ...pillStyle,
+                ...PILL_STYLE,
                 borderColor: summary.today_cost > 0 ? "var(--warn)" : "var(--border)",
               }}
             >
@@ -105,12 +107,12 @@ export function SessionWidget() {
             </div>
 
             {summary.last_decision ? (
-              <div style={pillStyle}>
+              <div style={PILL_STYLE}>
                 <span>✅</span>
                 <span>Last decision {relTime(summary.last_decision)}</span>
               </div>
             ) : (
-              <div style={{ ...pillStyle, opacity: 0.45 }}>
+              <div style={{ ...PILL_STYLE, opacity: 0.45 }}>
                 <span>✅</span>
                 <span>No decisions yet</span>
               </div>

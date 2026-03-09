@@ -1,45 +1,54 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { Checkpoint } from "@klaxon/protocol";
 import { DraggablePanel } from "../components/DraggablePanel";
 import { relTime } from "../utils";
+import { useTauriEvent } from "../hooks/useTauriEvent";
 
 export function CheckpointWidget() {
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [sessionFilter, setSessionFilter] = useState("");
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     try {
       const raw = await invoke<Checkpoint[]>("checkpoints_list", { limit: 100 });
       setCheckpoints(raw ?? []);
-    } catch {}
-  }
+    } catch (err) {
+      console.error("[CheckpointWidget] refresh failed:", err);
+    }
+  }, []);
 
   useEffect(() => {
     refresh();
-    const u1 = listen("checkpoints.updated", () => refresh());
-    return () => {
-      u1.then(u => u());
-    };
-  }, []);
+  }, [refresh]);
 
-  async function clearAll() {
+  useTauriEvent("checkpoints.updated", refresh);
+
+  const clearAll = useCallback(async () => {
     const tag = sessionFilter.trim() || null;
     if (!window.confirm(tag ? `Clear checkpoints for "${tag}"?` : "Clear all checkpoints?")) return;
     try {
       await invoke("checkpoints_clear", { sessionTag: tag });
-    } catch {}
-  }
+    } catch (err) {
+      console.error("[CheckpointWidget] clear failed:", err);
+    }
+  }, [sessionFilter]);
 
-  const sessions = [...new Set(checkpoints.map(c => c.session_tag).filter(Boolean) as string[])];
-  const filtered = sessionFilter
-    ? checkpoints.filter(c => c.session_tag === sessionFilter)
-    : checkpoints;
+  const sessions = useMemo(
+    () => [...new Set(checkpoints.map(c => c.session_tag).filter(Boolean) as string[])],
+    [checkpoints],
+  );
 
-  // Latest progress_pct from filtered list
-  const latestPct = filtered.find(c => c.progress_pct != null)?.progress_pct ?? null;
+  const filtered = useMemo(
+    () => (sessionFilter ? checkpoints.filter(c => c.session_tag === sessionFilter) : checkpoints),
+    [checkpoints, sessionFilter],
+  );
+
+  const latestPct = useMemo(
+    () => filtered.find(c => c.progress_pct != null)?.progress_pct ?? null,
+    [filtered],
+  );
 
   return (
     <DraggablePanel id="checkpoints" title="Checkpoints" width={420}>
@@ -122,63 +131,18 @@ export function CheckpointWidget() {
         {filtered.length === 0 ? (
           <div style={{ fontSize: 12, opacity: 0.45 }}>No checkpoints yet.</div>
         ) : (
-          filtered.map((cp, i) => {
-            const isLatest = i === 0;
-            const isExpanded = expanded === cp.id;
-            return (
-              <div key={cp.id} style={{ display: "flex", gap: 10 }}>
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    width: 20,
-                    flexShrink: 0,
-                  }}
-                >
-                  <div
-                    style={{
-                      width: 14,
-                      height: 14,
-                      borderRadius: "50%",
-                      flexShrink: 0,
-                      background: isLatest ? "var(--info)" : "var(--ok)",
-                      border: isLatest ? "2px solid var(--text)" : "none",
-                      marginTop: 8,
-                    }}
-                  />
-                  {i < filtered.length - 1 && (
-                    <div style={{ width: 2, flex: 1, background: "var(--border)", marginTop: 2 }} />
-                  )}
-                </div>
-                <div
-                  style={{
-                    flex: 1,
-                    padding: "7px 0 10px",
-                    cursor: cp.detail ? "pointer" : "default",
-                    borderBottom: i < filtered.length - 1 ? "none" : undefined,
-                  }}
-                  onClick={() => cp.detail && setExpanded(isExpanded ? null : cp.id)}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ flex: 1, fontSize: 12, fontWeight: isLatest ? 700 : 500 }}>
-                      {cp.label}
-                    </span>
-                    {cp.progress_pct != null && (
-                      <span style={{ fontSize: 10, opacity: 0.55 }}>{cp.progress_pct}%</span>
-                    )}
-                    <span style={{ fontSize: 10, opacity: 0.45 }}>{relTime(cp.created_at)}</span>
-                  </div>
-                  {isExpanded && cp.detail && (
-                    <div style={{ marginTop: 4, fontSize: 11, opacity: 0.7 }}>{cp.detail}</div>
-                  )}
-                  {!isExpanded && cp.detail && (
-                    <div style={{ fontSize: 11, opacity: 0.5, marginTop: 2 }}>{cp.detail}</div>
-                  )}
-                </div>
-              </div>
-            );
-          })
+          filtered.map((cp, i) => (
+            <CheckpointRow
+              key={cp.id}
+              checkpoint={cp}
+              isLatest={i === 0}
+              isLast={i === filtered.length - 1}
+              isExpanded={expanded === cp.id}
+              onToggle={() =>
+                cp.detail && setExpanded(expanded === cp.id ? null : cp.id)
+              }
+            />
+          ))
         )}
       </div>
 
@@ -202,3 +166,70 @@ export function CheckpointWidget() {
     </DraggablePanel>
   );
 }
+
+const CheckpointRow = React.memo(function CheckpointRow({
+  checkpoint: cp,
+  isLatest,
+  isLast,
+  isExpanded,
+  onToggle,
+}: {
+  checkpoint: Checkpoint;
+  isLatest: boolean;
+  isLast: boolean;
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div style={{ display: "flex", gap: 10 }}>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          width: 20,
+          flexShrink: 0,
+        }}
+      >
+        <div
+          style={{
+            width: 14,
+            height: 14,
+            borderRadius: "50%",
+            flexShrink: 0,
+            background: isLatest ? "var(--info)" : "var(--ok)",
+            border: isLatest ? "2px solid var(--text)" : "none",
+            marginTop: 8,
+          }}
+        />
+        {!isLast && (
+          <div style={{ width: 2, flex: 1, background: "var(--border)", marginTop: 2 }} />
+        )}
+      </div>
+      <div
+        style={{
+          flex: 1,
+          padding: "7px 0 10px",
+          cursor: cp.detail ? "pointer" : "default",
+        }}
+        onClick={onToggle}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ flex: 1, fontSize: 12, fontWeight: isLatest ? 700 : 500 }}>
+            {cp.label}
+          </span>
+          {cp.progress_pct != null && (
+            <span style={{ fontSize: 10, opacity: 0.55 }}>{cp.progress_pct}%</span>
+          )}
+          <span style={{ fontSize: 10, opacity: 0.45 }}>{relTime(cp.created_at)}</span>
+        </div>
+        {isExpanded && cp.detail && (
+          <div style={{ marginTop: 4, fontSize: 11, opacity: 0.7 }}>{cp.detail}</div>
+        )}
+        {!isExpanded && cp.detail && (
+          <div style={{ fontSize: 11, opacity: 0.5, marginTop: 2 }}>{cp.detail}</div>
+        )}
+      </div>
+    </div>
+  );
+});

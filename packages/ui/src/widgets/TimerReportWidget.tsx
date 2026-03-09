@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { WeekEntry } from "@klaxon/protocol";
 import { DraggablePanel } from "../components/DraggablePanel";
 import { fmtSeconds, dayLabel } from "../utils";
+import { useTauriEvent } from "../hooks/useTauriEvent";
 
 function last7Days(): string[] {
   const days: string[] = [];
@@ -27,40 +27,55 @@ export function TimerReportWidget() {
   const [entries, setEntries] = useState<WeekEntry[]>([]);
   const [copied, setCopied] = useState(false);
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     try {
       const raw = await invoke<WeekEntry[]>("timer_week");
       setEntries(raw ?? []);
-    } catch {}
-  }
+    } catch (err) {
+      console.error("[TimerReportWidget] refresh failed:", err);
+    }
+  }, []);
 
   useEffect(() => {
     refresh();
-    const unsub = listen("timer.updated", () => refresh());
-    return () => {
-      unsub.then(u => u());
-    };
-  }, []);
+  }, [refresh]);
 
-  const days = last7Days();
-  const issues = [...new Set(entries.map(e => e.issue_id))].sort();
+  useTauriEvent("timer.updated", refresh);
 
-  const lookup = new Map<string, number>();
-  for (const e of entries) {
-    lookup.set(`${e.issue_id}|${e.date}`, e.seconds);
-  }
-
-  const rowTotals = issues.map(id => ({
-    id,
-    total: days.reduce((s, d) => s + (lookup.get(`${id}|${d}`) ?? 0), 0),
-  }));
-
-  const colTotals = days.map(d =>
-    entries.filter(e => e.date === d).reduce((s, e) => s + e.seconds, 0)
+  const days = useMemo(last7Days, []);
+  const issues = useMemo(
+    () => [...new Set(entries.map(e => e.issue_id))].sort(),
+    [entries],
   );
-  const grandTotal = colTotals.reduce((a, b) => a + b, 0);
 
-  function copyText() {
+  const lookup = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const e of entries) {
+      map.set(`${e.issue_id}|${e.date}`, e.seconds);
+    }
+    return map;
+  }, [entries]);
+
+  const rowTotals = useMemo(
+    () =>
+      issues.map(id => ({
+        id,
+        total: days.reduce((s, d) => s + (lookup.get(`${id}|${d}`) ?? 0), 0),
+      })),
+    [issues, days, lookup],
+  );
+
+  const colTotals = useMemo(
+    () =>
+      days.map(d =>
+        entries.filter(e => e.date === d).reduce((s, e) => s + e.seconds, 0),
+      ),
+    [days, entries],
+  );
+
+  const grandTotal = useMemo(() => colTotals.reduce((a, b) => a + b, 0), [colTotals]);
+
+  const copyText = useCallback(() => {
     const lines = ["Issue\t" + days.map(dayLabel).join("\t") + "\tTotal"];
     for (const { id, total } of rowTotals) {
       const row = days.map(d => {
@@ -73,13 +88,13 @@ export function TimerReportWidget() {
       "Total\t" +
         colTotals.map(s => (s > 0 ? fmtSeconds(s) : "")).join("\t") +
         "\t" +
-        fmtSeconds(grandTotal)
+        fmtSeconds(grandTotal),
     );
     navigator.clipboard.writeText(lines.join("\n")).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
-  }
+  }, [days, rowTotals, colTotals, grandTotal, lookup]);
 
   return (
     <DraggablePanel id="timer-report" title="Timer Report" width={460}>
@@ -123,7 +138,7 @@ export function TimerReportWidget() {
                   </td>
                   {colTotals.map((s, i) => (
                     <td
-                      key={i}
+                      key={days[i]}
                       style={{ ...cellStyle, fontWeight: 700, opacity: s > 0 ? 1 : 0.25 }}
                     >
                       {s > 0 ? fmtSeconds(s) : "—"}

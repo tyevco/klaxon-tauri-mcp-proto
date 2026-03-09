@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { KlaxonItem, KlaxonItemSchema } from "@klaxon/protocol";
 import { DraggablePanel } from "../components/DraggablePanel";
+import { useTauriEvent } from "../hooks/useTauriEvent";
 
 function badgeColor(level: string) {
   switch (level) {
@@ -18,11 +18,51 @@ function badgeColor(level: string) {
   }
 }
 
+const BTN_STYLE: React.CSSProperties = {
+  background: "transparent",
+  border: "1px solid var(--border)",
+  color: "var(--text)",
+  borderRadius: 10,
+  padding: "6px 10px",
+  fontSize: 12,
+};
+
+const PRIMARY_BTN_STYLE: React.CSSProperties = {
+  background: "rgba(90, 169, 255, 0.18)",
+  border: "1px solid rgba(90, 169, 255, 0.5)",
+  color: "var(--text)",
+  borderRadius: 10,
+  padding: "6px 10px",
+  fontSize: 12,
+};
+
+const HEADER_STYLE: React.CSSProperties = {
+  display: "flex",
+  gap: 8,
+  alignItems: "center",
+  justifyContent: "space-between",
+  marginBottom: 10,
+};
+
+const REFRESH_BTN_STYLE: React.CSSProperties = {
+  background: "transparent",
+  border: "1px solid var(--border)",
+  color: "var(--text)",
+  borderRadius: 10,
+  padding: "6px 10px",
+};
+
+const LIST_STYLE: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 10,
+};
+
 export function KlaxonWidget() {
   const [items, setItems] = useState<KlaxonItem[]>([]);
   const [busy, setBusy] = useState(false);
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     setBusy(true);
     try {
       const raw = (await invoke("klaxon_list_open")) as unknown[];
@@ -32,54 +72,33 @@ export function KlaxonWidget() {
     } finally {
       setBusy(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
     if (typeof Notification !== "undefined" && Notification.permission === "default") {
       Notification.requestPermission();
     }
     refresh();
-    const u1 = listen("klaxon.updated", () => refresh());
-    const u2 = listen<KlaxonItem>("klaxon.created", event => {
-      refresh();
-      if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-        new Notification(event.payload.title, { body: event.payload.message });
-      }
-    });
-    return () => {
-      u1.then(u => u());
-      u2.then(u => u());
-    };
-  }, []);
+  }, [refresh]);
+
+  useTauriEvent("klaxon.updated", refresh);
+  useTauriEvent<KlaxonItem>("klaxon.created", useCallback((payload) => {
+    refresh();
+    if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+      new Notification(payload.title, { body: payload.message });
+    }
+  }, [refresh]));
 
   return (
     <DraggablePanel id="klaxon" title="Klaxon" width={380}>
-      <div
-        style={{
-          display: "flex",
-          gap: 8,
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: 10,
-        }}
-      >
+      <div style={HEADER_STYLE}>
         <div style={{ fontSize: 12, opacity: 0.7 }}>{items.length} open</div>
-        <button
-          onClick={refresh}
-          disabled={busy}
-          style={{
-            background: "transparent",
-            border: "1px solid var(--border)",
-            color: "var(--text)",
-            borderRadius: 10,
-            padding: "6px 10px",
-          }}
-        >
+        <button onClick={refresh} disabled={busy} style={REFRESH_BTN_STYLE}>
           {busy ? "…" : "Refresh"}
         </button>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={LIST_STYLE}>
         {items.map(item => (
           <KlaxonCard key={item.id} item={item} onChanged={refresh} />
         ))}
@@ -89,39 +108,73 @@ export function KlaxonWidget() {
   );
 }
 
-function KlaxonCard({ item, onChanged }: { item: KlaxonItem; onChanged: () => void }) {
-  async function ack() {
-    await invoke("klaxon_ack", { id: item.id });
-    onChanged();
-  }
+const CARD_STYLE: React.CSSProperties = {
+  background: "var(--card)",
+  border: "1px solid var(--border)",
+  borderRadius: 12,
+  padding: 12,
+};
 
-  async function dismiss() {
-    await invoke("klaxon_dismiss", { id: item.id });
-    onChanged();
-  }
+const CARD_HEADER_STYLE: React.CSSProperties = {
+  display: "flex",
+  alignItems: "flex-start",
+  justifyContent: "space-between",
+  gap: 8,
+};
 
-  async function runAction(actionId: string) {
-    await invoke("klaxon_run_action", { id: item.id, actionId });
+const ACTIONS_ROW_STYLE: React.CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 8,
+  marginTop: 10,
+};
+
+const KlaxonCard = React.memo(function KlaxonCard({
+  item,
+  onChanged,
+}: {
+  item: KlaxonItem;
+  onChanged: () => void;
+}) {
+  const ack = useCallback(async () => {
+    try {
+      await invoke("klaxon_ack", { id: item.id });
+    } catch (err) {
+      console.error("[KlaxonCard] ack failed:", err);
+    }
     onChanged();
-  }
+  }, [item.id, onChanged]);
+
+  const dismiss = useCallback(async () => {
+    try {
+      await invoke("klaxon_dismiss", { id: item.id });
+    } catch (err) {
+      console.error("[KlaxonCard] dismiss failed:", err);
+    }
+    onChanged();
+  }, [item.id, onChanged]);
+
+  const runAction = useCallback(
+    async (actionId: string) => {
+      try {
+        await invoke("klaxon_run_action", { id: item.id, actionId });
+      } catch (err) {
+        console.error("[KlaxonCard] runAction failed:", err);
+      }
+      onChanged();
+    },
+    [item.id, onChanged],
+  );
+
+  const openForm = useCallback(() => {
+    invoke("klaxon_open_form", { id: item.id }).catch((err: unknown) =>
+      console.error("[KlaxonCard] openForm failed:", err),
+    );
+  }, [item.id]);
 
   return (
-    <div
-      style={{
-        background: "var(--card)",
-        border: "1px solid var(--border)",
-        borderRadius: 12,
-        padding: 12,
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          justifyContent: "space-between",
-          gap: 8,
-        }}
-      >
+    <div style={CARD_STYLE}>
+      <div style={CARD_HEADER_STYLE}>
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span
@@ -141,19 +194,19 @@ function KlaxonCard({ item, onChanged }: { item: KlaxonItem; onChanged: () => vo
           )}
         </div>
         <div style={{ display: "flex", gap: 6 }}>
-          <button onClick={ack} style={btnStyle()}>
+          <button onClick={ack} style={BTN_STYLE}>
             Ack
           </button>
-          <button onClick={dismiss} style={btnStyle()}>
+          <button onClick={dismiss} style={BTN_STYLE}>
             Dismiss
           </button>
         </div>
       </div>
 
       {item.actions?.length ? (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+        <div style={ACTIONS_ROW_STYLE}>
           {item.actions.map(a => (
-            <button key={a.id} onClick={() => runAction(a.id)} style={btnStyle()}>
+            <button key={a.id} onClick={() => runAction(a.id)} style={BTN_STYLE}>
               {a.label}
             </button>
           ))}
@@ -162,10 +215,7 @@ function KlaxonCard({ item, onChanged }: { item: KlaxonItem; onChanged: () => vo
 
       {item.form && item.status === "open" && (
         <div style={{ marginTop: 10 }}>
-          <button
-            onClick={() => invoke("klaxon_open_form", { id: item.id })}
-            style={primaryBtnStyle()}
-          >
+          <button onClick={openForm} style={PRIMARY_BTN_STYLE}>
             Open Form
           </button>
         </div>
@@ -176,28 +226,7 @@ function KlaxonCard({ item, onChanged }: { item: KlaxonItem; onChanged: () => vo
       {item.ttl_ms && <TtlBar createdAt={item.created_at} ttlMs={item.ttl_ms} />}
     </div>
   );
-}
-
-function btnStyle(): React.CSSProperties {
-  return {
-    background: "transparent",
-    border: "1px solid var(--border)",
-    color: "var(--text)",
-    borderRadius: 10,
-    padding: "6px 10px",
-    fontSize: 12,
-  };
-}
-function primaryBtnStyle(): React.CSSProperties {
-  return {
-    background: "rgba(90, 169, 255, 0.18)",
-    border: "1px solid rgba(90, 169, 255, 0.5)",
-    color: "var(--text)",
-    borderRadius: 10,
-    padding: "6px 10px",
-    fontSize: 12,
-  };
-}
+});
 
 function TtlBar({ createdAt, ttlMs }: { createdAt: string; ttlMs: number }) {
   const [pct, setPct] = useState(() => {
