@@ -1,8 +1,8 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { LogLine } from "@klaxon/protocol";
 import { DraggablePanel } from "../components/DraggablePanel";
+import { useTauriEvent } from "../hooks/useTauriEvent";
 
 const STREAM_COLORS: Record<string, string> = {
   stderr: "var(--danger)",
@@ -14,6 +14,27 @@ function streamColor(stream: string): string {
   return STREAM_COLORS[stream] ?? "var(--text)";
 }
 
+const LOG_CONTAINER_STYLE: React.CSSProperties = {
+  overflowY: "auto",
+  maxHeight: 400,
+  fontFamily: "monospace",
+  fontSize: 11,
+  background: "var(--bg)",
+  border: "1px solid var(--border)",
+  borderRadius: 6,
+  padding: "6px 8px",
+};
+
+const SMALL_BTN_STYLE: React.CSSProperties = {
+  fontSize: 11,
+  padding: "2px 8px",
+  borderRadius: 6,
+  cursor: "pointer",
+  background: "var(--card)",
+  border: "1px solid var(--border)",
+  color: "var(--text)",
+};
+
 export function LogTailWidget() {
   const [lines, setLines] = useState<LogLine[]>([]);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -23,7 +44,7 @@ export function LogTailWidget() {
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     if (pausedRef.current) return;
     try {
       const raw = await invoke<LogLine[]>("logtail_recent", {
@@ -31,16 +52,16 @@ export function LogTailWidget() {
         stream: streamFilter || null,
       });
       setLines(raw ?? []);
-    } catch {}
-  }
+    } catch (err) {
+      console.error("[LogTailWidget] refresh failed:", err);
+    }
+  }, [streamFilter]);
 
   useEffect(() => {
     refresh();
-    const u1 = listen("logtail.updated", () => refresh());
-    return () => {
-      u1.then(u => u());
-    };
-  }, [streamFilter]);
+  }, [refresh]);
+
+  useTauriEvent("logtail.updated", refresh, [streamFilter]);
 
   useEffect(() => {
     if (autoScroll) {
@@ -48,7 +69,16 @@ export function LogTailWidget() {
     }
   }, [lines, autoScroll]);
 
-  const streams = [...new Set(lines.map(l => l.stream))];
+  const streams = useMemo(() => [...new Set(lines.map(l => l.stream))], [lines]);
+
+  const handleClear = useCallback(async () => {
+    try {
+      await invoke("logtail_clear");
+      setLines([]);
+    } catch (err) {
+      console.error("[LogTailWidget] clear failed:", err);
+    }
+  }, []);
 
   return (
     <DraggablePanel id="logtail" title="Log Tail" width={540}>
@@ -101,10 +131,7 @@ export function LogTailWidget() {
         <button
           onClick={() => setPaused(p => !p)}
           style={{
-            fontSize: 11,
-            padding: "2px 8px",
-            borderRadius: 6,
-            cursor: "pointer",
+            ...SMALL_BTN_STYLE,
             background: paused ? "var(--warn)" : "var(--card)",
             border: `1px solid ${paused ? "var(--warn)" : "var(--border)"}`,
             color: paused ? "#fff" : "var(--text)",
@@ -112,44 +139,19 @@ export function LogTailWidget() {
         >
           {paused ? "Resume" : "Pause"}
         </button>
-        <button
-          onClick={async () => {
-            await invoke("logtail_clear");
-            setLines([]);
-          }}
-          style={{
-            fontSize: 11,
-            padding: "2px 8px",
-            borderRadius: 6,
-            cursor: "pointer",
-            background: "var(--card)",
-            border: "1px solid var(--border)",
-            color: "var(--text)",
-          }}
-        >
+        <button onClick={handleClear} style={SMALL_BTN_STYLE}>
           Clear
         </button>
       </div>
 
-      <div
-        style={{
-          overflowY: "auto",
-          maxHeight: 400,
-          fontFamily: "monospace",
-          fontSize: 11,
-          background: "var(--bg)",
-          border: "1px solid var(--border)",
-          borderRadius: 6,
-          padding: "6px 8px",
-        }}
-      >
+      <div style={LOG_CONTAINER_STYLE}>
         {lines.length === 0 ? (
           <span style={{ opacity: 0.4 }}>
             No log output yet. Agents can stream lines via logtail.append.
           </span>
         ) : (
           lines.map((l, i) => (
-            <div key={i} style={{ display: "flex", gap: 8, lineHeight: 1.5 }}>
+            <div key={`${l.ts}-${i}`} style={{ display: "flex", gap: 8, lineHeight: 1.5 }}>
               <span style={{ opacity: 0.35, flexShrink: 0, fontSize: 10 }}>
                 {new Date(l.ts).toLocaleTimeString()}
               </span>

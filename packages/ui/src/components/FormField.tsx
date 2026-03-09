@@ -9,27 +9,50 @@ export interface FormFieldProps {
   onChange: (v: any) => void;
 }
 
-function btnStyle(): React.CSSProperties {
-  return {
-    background: "transparent",
-    border: "1px solid var(--border)",
-    color: "var(--text)",
-    borderRadius: 10,
-    padding: "6px 10px",
-    fontSize: 12,
-  };
-}
+const BTN_STYLE: React.CSSProperties = {
+  background: "transparent",
+  border: "1px solid var(--border)",
+  color: "var(--text)",
+  borderRadius: 10,
+  padding: "6px 10px",
+  fontSize: 12,
+};
 
-function primaryBtnStyle(): React.CSSProperties {
-  return {
-    background: "rgba(90, 169, 255, 0.18)",
-    border: "1px solid rgba(90, 169, 255, 0.5)",
-    color: "var(--text)",
-    borderRadius: 10,
-    padding: "6px 10px",
-    fontSize: 12,
-  };
-}
+const PRIMARY_BTN_STYLE: React.CSSProperties = {
+  background: "rgba(90, 169, 255, 0.18)",
+  border: "1px solid rgba(90, 169, 255, 0.5)",
+  color: "var(--text)",
+  borderRadius: 10,
+  padding: "6px 10px",
+  fontSize: 12,
+};
+
+const COMMON_INPUT: React.CSSProperties = {
+  width: "100%",
+  borderRadius: 10,
+  border: "1px solid var(--border)",
+  background: "rgba(0,0,0,0.18)",
+  color: "var(--text)",
+  padding: "8px 10px",
+  fontSize: 13,
+  boxSizing: "border-box",
+};
+
+const RADIO_CONTAINER_STYLE: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 6,
+  marginTop: 6,
+};
+
+const LABEL_ROW_STYLE: React.CSSProperties = {
+  display: "flex",
+  gap: 8,
+  alignItems: "center",
+  marginTop: 6,
+  fontSize: 13,
+  opacity: 0.9,
+};
 
 function DiffView({ diff }: { diff: string }) {
   return (
@@ -69,24 +92,13 @@ export function FormFieldRenderer({ field, value, error, onChange }: FormFieldPr
     </div>
   );
 
-  const commonInput: React.CSSProperties = {
-    width: "100%",
-    borderRadius: 10,
-    border: "1px solid var(--border)",
-    background: "rgba(0,0,0,0.18)",
-    color: "var(--text)",
-    padding: "8px 10px",
-    fontSize: 13,
-    boxSizing: "border-box",
-  };
-
   switch (field.type) {
     case "text":
       return (
         <div>
           {label}
           <input
-            style={commonInput}
+            style={COMMON_INPUT}
             value={value ?? ""}
             placeholder={field.placeholder ?? ""}
             onChange={e => onChange(e.target.value)}
@@ -98,7 +110,7 @@ export function FormFieldRenderer({ field, value, error, onChange }: FormFieldPr
         <div>
           {label}
           <textarea
-            style={{ ...commonInput, minHeight: 72 }}
+            style={{ ...COMMON_INPUT, minHeight: 72 }}
             value={value ?? ""}
             placeholder={field.placeholder ?? ""}
             onChange={e => onChange(e.target.value)}
@@ -110,7 +122,7 @@ export function FormFieldRenderer({ field, value, error, onChange }: FormFieldPr
         <div>
           {label}
           <input
-            style={commonInput}
+            style={COMMON_INPUT}
             type="number"
             value={value ?? ""}
             onChange={e => onChange(e.target.value)}
@@ -121,7 +133,7 @@ export function FormFieldRenderer({ field, value, error, onChange }: FormFieldPr
       return (
         <div>
           {label}
-          <select style={commonInput} value={value ?? ""} onChange={e => onChange(e.target.value)}>
+          <select style={COMMON_INPUT} value={value ?? ""} onChange={e => onChange(e.target.value)}>
             <option value="" disabled>
               Select…
             </option>
@@ -138,7 +150,7 @@ export function FormFieldRenderer({ field, value, error, onChange }: FormFieldPr
         <div>
           {label}
           <select
-            style={commonInput}
+            style={COMMON_INPUT}
             multiple
             value={Array.isArray(value) ? value : []}
             onChange={e => {
@@ -158,18 +170,9 @@ export function FormFieldRenderer({ field, value, error, onChange }: FormFieldPr
       return (
         <div>
           {label}
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
+          <div style={RADIO_CONTAINER_STYLE}>
             {field.options?.map(o => (
-              <label
-                key={o.value}
-                style={{
-                  display: "flex",
-                  gap: 8,
-                  alignItems: "center",
-                  fontSize: 13,
-                  opacity: 0.9,
-                }}
-              >
+              <label key={o.value} style={LABEL_ROW_STYLE}>
                 <input
                   type="radio"
                   name={field.id}
@@ -186,16 +189,7 @@ export function FormFieldRenderer({ field, value, error, onChange }: FormFieldPr
       return (
         <div>
           {label}
-          <label
-            style={{
-              display: "flex",
-              gap: 8,
-              alignItems: "center",
-              marginTop: 6,
-              fontSize: 13,
-              opacity: 0.9,
-            }}
-          >
+          <label style={LABEL_ROW_STYLE}>
             <input type="checkbox" checked={!!value} onChange={e => onChange(e.target.checked)} />
             {field.help ?? "Enabled"}
           </label>
@@ -205,16 +199,7 @@ export function FormFieldRenderer({ field, value, error, onChange }: FormFieldPr
       return (
         <div>
           {label}
-          <label
-            style={{
-              display: "flex",
-              gap: 8,
-              alignItems: "center",
-              marginTop: 6,
-              fontSize: 13,
-              opacity: 0.9,
-            }}
-          >
+          <label style={LABEL_ROW_STYLE}>
             <input type="checkbox" checked={!!value} onChange={e => onChange(e.target.checked)} />
             {field.help ?? (value ? "On" : "Off")}
           </label>
@@ -225,7 +210,7 @@ export function FormFieldRenderer({ field, value, error, onChange }: FormFieldPr
         <div>
           {label}
           <input
-            style={commonInput}
+            style={COMMON_INPUT}
             type="datetime-local"
             value={value ?? ""}
             onChange={e => onChange(e.target.value)}
@@ -237,7 +222,7 @@ export function FormFieldRenderer({ field, value, error, onChange }: FormFieldPr
         <div>
           {label}
           <input
-            style={commonInput}
+            style={COMMON_INPUT}
             list={`${field.id}-issues`}
             value={value ?? ""}
             placeholder={field.placeholder ?? "PROJ-123"}
@@ -268,10 +253,10 @@ export function FormFieldRenderer({ field, value, error, onChange }: FormFieldPr
           >
             <DiffView diff={field.diff} />
             <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-              <button style={primaryBtnStyle()} onClick={() => onChange("approve")}>
+              <button style={PRIMARY_BTN_STYLE} onClick={() => onChange("approve")}>
                 {field.approve_label ?? "Approve"}
               </button>
-              <button style={btnStyle()} onClick={() => onChange("reject")}>
+              <button style={BTN_STYLE} onClick={() => onChange("reject")}>
                 {field.reject_label ?? "Reject"}
               </button>
             </div>

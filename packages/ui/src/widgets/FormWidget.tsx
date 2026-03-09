@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { KlaxonItemSchema, FormSchema, FormPage } from "@klaxon/protocol";
 import { DraggablePanel } from "../components/DraggablePanel";
 import { FormFieldRenderer, validateField } from "../components/FormField";
+import { useTauriEvent } from "../hooks/useTauriEvent";
 
 function normalizePages(form: FormSchema): FormPage[] {
   if (form.pages && form.pages.length > 0) return form.pages;
@@ -23,6 +23,24 @@ interface WizardState {
 function isLinear(pages: FormPage[]): boolean {
   return pages.every(p => !p.next || p.next.kind === "end" || p.next.kind === "fixed");
 }
+
+const BTN_STYLE: React.CSSProperties = {
+  background: "transparent",
+  border: "1px solid var(--border)",
+  color: "var(--text)",
+  borderRadius: 10,
+  padding: "6px 10px",
+  fontSize: 12,
+};
+
+const PRIMARY_BTN_STYLE: React.CSSProperties = {
+  background: "rgba(90, 169, 255, 0.18)",
+  border: "1px solid rgba(90, 169, 255, 0.5)",
+  color: "var(--text)",
+  borderRadius: 10,
+  padding: "6px 10px",
+  fontSize: 12,
+};
 
 function ProgressDots({
   pages,
@@ -71,41 +89,37 @@ function ProgressDots({
 export function FormWidget() {
   const [wizard, setWizard] = useState<WizardState | null>(null);
 
-  useEffect(() => {
-    const u1 = listen<{ id: string }>("form.open", async event => {
-      const { id } = event.payload;
-      try {
-        const raw = await invoke("klaxon_get_item", { id });
-        if (!raw) return;
-        const item = KlaxonItemSchema.parse(raw);
-        if (!item.form) return;
-        const pages = normalizePages(item.form);
-        setWizard({
-          itemId: item.id,
-          form: item.form,
-          pages,
-          currentPageId: pages[0].id,
-          history: [],
-          values: {},
-          errors: {},
-        });
-      } catch (err) {
-        console.error("[FormWidget] form.open error:", err);
-      }
-    });
-
-    const u2 = listen<{ id: string }>("klaxon.answered", event => {
-      setWizard(prev => {
-        if (prev && prev.itemId === event.payload.id) return null;
-        return prev;
+  const handleFormOpen = useCallback(async (payload: { id: string }) => {
+    const { id } = payload;
+    try {
+      const raw = await invoke("klaxon_get_item", { id });
+      if (!raw) return;
+      const item = KlaxonItemSchema.parse(raw);
+      if (!item.form) return;
+      const pages = normalizePages(item.form);
+      setWizard({
+        itemId: item.id,
+        form: item.form,
+        pages,
+        currentPageId: pages[0].id,
+        history: [],
+        values: {},
+        errors: {},
       });
-    });
-
-    return () => {
-      u1.then(u => u());
-      u2.then(u => u());
-    };
+    } catch (err) {
+      console.error("[FormWidget] form.open error:", err);
+    }
   }, []);
+
+  const handleAnswered = useCallback((payload: { id: string }) => {
+    setWizard(prev => {
+      if (prev && prev.itemId === payload.id) return null;
+      return prev;
+    });
+  }, []);
+
+  useTauriEvent<{ id: string }>("form.open", handleFormOpen);
+  useTauriEvent<{ id: string }>("klaxon.answered", handleAnswered);
 
   if (!wizard) {
     return (
@@ -131,7 +145,6 @@ export function FormWidget() {
   async function handleNext() {
     if (!wizard || !currentPage) return;
 
-    // Validate
     const nextErrors: Record<string, string> = {};
     for (const f of currentPage.fields) {
       const err = validateField(f, wizard.values[f.id]);
@@ -144,7 +157,6 @@ export function FormWidget() {
 
     const next = currentPage.next;
 
-    // No next, end, or last page → submit
     if (!next || next.kind === "end") {
       await doSubmit();
       return;
@@ -201,7 +213,11 @@ export function FormWidget() {
   }
 
   async function handleCancel() {
-    await invoke("hide_panel", { label: "form" });
+    try {
+      await invoke("hide_panel", { label: "form" });
+    } catch (err) {
+      console.error("[FormWidget] cancel error:", err);
+    }
     setWizard(null);
   }
 
@@ -258,42 +274,20 @@ export function FormWidget() {
       <div style={{ display: "flex", gap: 8, marginTop: 14, justifyContent: "space-between" }}>
         <div style={{ display: "flex", gap: 8 }}>
           {wizard.history.length > 0 && (
-            <button onClick={handleBack} style={btnStyle()}>
+            <button onClick={handleBack} style={BTN_STYLE}>
               Back
             </button>
           )}
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={handleCancel} style={btnStyle()}>
+          <button onClick={handleCancel} style={BTN_STYLE}>
             {cancelLabel}
           </button>
-          <button onClick={handleNext} style={primaryBtnStyle()}>
+          <button onClick={handleNext} style={PRIMARY_BTN_STYLE}>
             {isLastPage ? submitLabel : "Next →"}
           </button>
         </div>
       </div>
     </DraggablePanel>
   );
-}
-
-function btnStyle(): React.CSSProperties {
-  return {
-    background: "transparent",
-    border: "1px solid var(--border)",
-    color: "var(--text)",
-    borderRadius: 10,
-    padding: "6px 10px",
-    fontSize: 12,
-  };
-}
-
-function primaryBtnStyle(): React.CSSProperties {
-  return {
-    background: "rgba(90, 169, 255, 0.18)",
-    border: "1px solid rgba(90, 169, 255, 0.5)",
-    color: "var(--text)",
-    borderRadius: 10,
-    padding: "6px 10px",
-    fontSize: 12,
-  };
 }

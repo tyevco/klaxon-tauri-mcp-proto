@@ -1,12 +1,23 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { useTauriEvent } from "../hooks/useTauriEvent";
 
 type Props = {
   id: string;
   width?: number;
   children: React.ReactNode;
   title?: string;
+};
+
+const TOOLBAR_BTN_STYLE: React.CSSProperties = {
+  background: "none",
+  border: "none",
+  cursor: "pointer",
+  fontSize: 13,
+  opacity: 0.6,
+  padding: "0 4px",
+  color: "inherit",
+  lineHeight: 1,
 };
 
 export function DraggablePanel({ id, width = 360, children, title }: Props) {
@@ -21,51 +32,56 @@ export function DraggablePanel({ id, width = 360, children, title }: Props) {
     if (!el) return;
     const observer = new ResizeObserver(() => {
       invoke("resize_window", { label: id, width: el.offsetWidth, height: el.offsetHeight }).catch(
-        () => {}
+        () => {},
       );
     });
     observer.observe(el);
     return () => observer.disconnect();
   }, [id]);
 
-  // Handle native popup menu selections routed back from Rust.
-  useEffect(() => {
-    if (typeof (window as any).__TAURI_INTERNALS__ === "undefined") return;
-    const unsub = listen<{ action: string }>("panel.menu", event => {
-      if (event.payload.action === "minimize") {
+  const handleMenuAction = useCallback(
+    (payload: { action: string }) => {
+      if (payload.action === "minimize") {
         invoke("hide_panel", { label: id }).catch(() => {});
-      } else if (event.payload.action === "pin") {
+      } else if (payload.action === "pin") {
         const next = !pinnedRef.current;
         setPinned(next);
         invoke("set_panel_always_on_top", { label: id, onTop: next }).catch(() => {});
       }
-    });
-    return () => {
-      unsub.then(u => u());
-    };
-  }, [id]);
+    },
+    [id],
+  );
 
-  function onHeaderMouseDown(e: React.MouseEvent) {
+  useTauriEvent<{ action: string }>(
+    "panel.menu",
+    handleMenuAction,
+    [id],
+  );
+
+  const onHeaderMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return;
     e.preventDefault();
     invoke("start_panel_drag");
-  }
+  }, []);
 
-  function onTitleBarContextMenu(e: React.MouseEvent) {
-    e.preventDefault();
-    invoke("show_panel_menu", { label: id, pinned: pinnedRef.current });
-  }
+  const onTitleBarContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      invoke("show_panel_menu", { label: id, pinned: pinnedRef.current });
+    },
+    [id],
+  );
 
-  async function handleMinimize() {
+  const handleMinimize = useCallback(async () => {
     if (typeof (window as any).__TAURI_INTERNALS__ === "undefined") return;
     await invoke("hide_panel", { label: id });
-  }
+  }, [id]);
 
-  async function togglePin() {
+  const togglePin = useCallback(async () => {
     const next = !pinned;
     setPinned(next);
     await invoke("set_panel_always_on_top", { label: id, onTop: next });
-  }
+  }, [id, pinned]);
 
   return (
     <div
@@ -112,12 +128,12 @@ export function DraggablePanel({ id, width = 360, children, title }: Props) {
           style={{ display: "flex", gap: 2, flexShrink: 0 }}
           onMouseDown={e => e.stopPropagation()}
         >
-          <button onClick={handleMinimize} style={toolbarBtnStyle()} title="Minimize">
+          <button onClick={handleMinimize} style={TOOLBAR_BTN_STYLE} title="Minimize">
             –
           </button>
           <button
             onClick={togglePin}
-            style={toolbarBtnStyle()}
+            style={TOOLBAR_BTN_STYLE}
             title={pinned ? "Unpin window" : "Pin window on top"}
           >
             {pinned ? "📌" : "📍"}
@@ -129,17 +145,4 @@ export function DraggablePanel({ id, width = 360, children, title }: Props) {
       <div style={{ padding: 12, userSelect: "text" }}>{children}</div>
     </div>
   );
-}
-
-function toolbarBtnStyle(): React.CSSProperties {
-  return {
-    background: "none",
-    border: "none",
-    cursor: "pointer",
-    fontSize: 13,
-    opacity: 0.6,
-    padding: "0 4px",
-    color: "inherit",
-    lineHeight: 1,
-  };
 }

@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { AgentInfo } from "@klaxon/protocol";
 import { DraggablePanel } from "../components/DraggablePanel";
 import { relTime } from "../utils";
+import { useTauriEvent } from "../hooks/useTauriEvent";
 
 function dotColor(lastSeenIso: string): string {
   const s = Math.floor((Date.now() - new Date(lastSeenIso).getTime()) / 1000);
@@ -16,22 +16,22 @@ export function AgentsWidget() {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [, setTick] = useState(0);
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     try {
       const raw = await invoke<AgentInfo[]>("mcp_list_agents");
       setAgents(raw ?? []);
-    } catch {}
-  }
+    } catch (err) {
+      console.error("[AgentsWidget] refresh failed:", err);
+    }
+  }, []);
 
   useEffect(() => {
     refresh();
-    const unsub = listen("agents.updated", () => refresh());
     const interval = setInterval(() => setTick(t => t + 1), 5000);
-    return () => {
-      unsub.then(u => u());
-      clearInterval(interval);
-    };
-  }, []);
+    return () => clearInterval(interval);
+  }, [refresh]);
+
+  useTauriEvent("agents.updated", refresh);
 
   return (
     <DraggablePanel id="agents" title="Agents" width={300}>
@@ -40,53 +40,58 @@ export function AgentsWidget() {
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {agents.map(a => (
-            <div
-              key={a.client_id}
-              style={{
-                background: "var(--card)",
-                border: "1px solid var(--border)",
-                borderRadius: 8,
-                padding: "7px 10px",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <div
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: "50%",
-                    background: dotColor(a.last_seen),
-                    flexShrink: 0,
-                  }}
-                />
-                <span
-                  style={{
-                    flex: 1,
-                    fontSize: 12,
-                    fontWeight: 600,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {a.client_id}
-                </span>
-                <span style={{ fontSize: 10, opacity: 0.5, whiteSpace: "nowrap" }}>
-                  {relTime(a.last_seen)}
-                </span>
-              </div>
-              <div style={{ display: "flex", gap: 8, marginTop: 4, fontSize: 11, opacity: 0.7 }}>
-                {a.last_tool && (
-                  <span>
-                    Last: <code>{a.last_tool}</code>
-                  </span>
-                )}
-                <span style={{ marginLeft: "auto" }}>{a.calls_today} calls today</span>
-              </div>
-            </div>
+            <AgentCard key={a.client_id} agent={a} />
           ))}
         </div>
       )}
     </DraggablePanel>
   );
 }
+
+const AGENT_CARD_STYLE: React.CSSProperties = {
+  background: "var(--card)",
+  border: "1px solid var(--border)",
+  borderRadius: 8,
+  padding: "7px 10px",
+};
+
+const AgentCard = React.memo(function AgentCard({ agent: a }: { agent: AgentInfo }) {
+  return (
+    <div style={AGENT_CARD_STYLE}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div
+          style={{
+            width: 8,
+            height: 8,
+            borderRadius: "50%",
+            background: dotColor(a.last_seen),
+            flexShrink: 0,
+          }}
+        />
+        <span
+          style={{
+            flex: 1,
+            fontSize: 12,
+            fontWeight: 600,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {a.client_id}
+        </span>
+        <span style={{ fontSize: 10, opacity: 0.5, whiteSpace: "nowrap" }}>
+          {relTime(a.last_seen)}
+        </span>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 4, fontSize: 11, opacity: 0.7 }}>
+        {a.last_tool && (
+          <span>
+            Last: <code>{a.last_tool}</code>
+          </span>
+        )}
+        <span style={{ marginLeft: "auto" }}>{a.calls_today} calls today</span>
+      </div>
+    </div>
+  );
+});

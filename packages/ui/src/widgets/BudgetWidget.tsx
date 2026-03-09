@@ -1,14 +1,24 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { DayTotals, AppSettings } from "@klaxon/protocol";
 import { DraggablePanel } from "../components/DraggablePanel";
 import { fmtUSD, dayLabel } from "../utils";
+import { useTauriEvents } from "../hooks/useTauriEvent";
 
 function gaugeColor(pct: number): string {
   if (pct >= 0.9) return "var(--danger)";
   if (pct >= 0.6) return "var(--warn)";
   return "var(--ok)";
+}
+
+function buildLast7Days(): string[] {
+  const days: string[] = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    days.push(d.toISOString().slice(0, 10));
+  }
+  return days;
 }
 
 export function BudgetWidget() {
@@ -17,7 +27,7 @@ export function BudgetWidget() {
   const [editingBudget, setEditingBudget] = useState(false);
   const [budgetInput, setBudgetInput] = useState("");
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     try {
       const [totals, s] = await Promise.all([
         invoke<DayTotals[]>("tokens_week"),
@@ -25,42 +35,55 @@ export function BudgetWidget() {
       ]);
       setWeekTotals(totals ?? []);
       setSettings(s);
-    } catch {}
-  }
+    } catch (err) {
+      console.error("[BudgetWidget] refresh failed:", err);
+    }
+  }, []);
 
   useEffect(() => {
     refresh();
-    const u1 = listen("tokens.updated", () => refresh());
-    const u2 = listen("settings.changed", () => refresh());
-    return () => {
-      u1.then(u => u());
-      u2.then(u => u());
-    };
-  }, []);
+  }, [refresh]);
 
-  const today = new Date().toISOString().slice(0, 10);
-  const todayCost = weekTotals.find(t => t.date === today)?.cost_usd ?? 0;
+  useTauriEvents([
+    { event: "tokens.updated", handler: refresh },
+    { event: "settings.changed", handler: refresh },
+  ]);
+
+  const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const todayCost = useMemo(
+    () => weekTotals.find(t => t.date === today)?.cost_usd ?? 0,
+    [weekTotals, today],
+  );
   const budget = settings?.budget_usd_daily ?? 0;
   const pct = budget > 0 ? Math.min(todayCost / budget, 1) : 0;
 
-  const days: string[] = [];
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    days.push(d.toISOString().slice(0, 10));
-  }
+  const days = useMemo(buildLast7Days, []);
+  const maxCost = useMemo(
+    () => Math.max(...weekTotals.map(t => t.cost_usd), budget > 0 ? budget : 0, 0.001),
+    [weekTotals, budget],
+  );
 
-  const maxCost = Math.max(...weekTotals.map(t => t.cost_usd), budget > 0 ? budget : 0, 0.001);
-
-  async function saveBudget() {
+  const saveBudget = useCallback(async () => {
     if (!settings) return;
     const v = parseFloat(budgetInput);
     if (isNaN(v) || v < 0) return;
     const updated = { ...settings, budget_usd_daily: v };
-    await invoke("settings_set", { settings: updated });
+    try {
+      await invoke("settings_set", { settings: updated });
+    } catch (err) {
+      console.error("[BudgetWidget] saveBudget failed:", err);
+    }
     setSettings(updated);
     setEditingBudget(false);
-  }
+  }, [settings, budgetInput]);
+
+  const onBudgetKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Enter") saveBudget();
+      if (e.key === "Escape") setEditingBudget(false);
+    },
+    [saveBudget],
+  );
 
   return (
     <DraggablePanel id="budget" title="Budget" width={260}>
@@ -150,10 +173,7 @@ export function BudgetWidget() {
               color: "var(--text)",
               fontSize: 12,
             }}
-            onKeyDown={e => {
-              if (e.key === "Enter") saveBudget();
-              if (e.key === "Escape") setEditingBudget(false);
-            }}
+            onKeyDown={onBudgetKeyDown}
             autoFocus
           />
           <button

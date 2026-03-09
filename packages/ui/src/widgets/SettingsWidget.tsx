@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { AlertRule, AppSettings } from "@klaxon/protocol";
 import { DraggablePanel } from "../components/DraggablePanel";
+import { useTauriEvent, useTauriEvents } from "../hooks/useTauriEvent";
 
 interface McpStatus {
   url: string;
@@ -23,12 +23,15 @@ function ThemeTab({
   settings: AppSettings;
   onSettingsChange: (s: AppSettings) => void;
 }) {
-  const selectTheme = (theme: string) => {
-    const next = { ...settings, theme };
-    invoke("settings_set", { settings: next }).catch(console.error);
-    document.documentElement.dataset.theme = theme;
-    onSettingsChange(next);
-  };
+  const selectTheme = useCallback(
+    (theme: string) => {
+      const next = { ...settings, theme };
+      invoke("settings_set", { settings: next }).catch(console.error);
+      document.documentElement.dataset.theme = theme;
+      onSettingsChange(next);
+    },
+    [settings, onSettingsChange],
+  );
 
   return (
     <div style={{ padding: "12px 0" }}>
@@ -57,6 +60,38 @@ function ThemeTab({
   );
 }
 
+const ROW_STYLE: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  padding: "6px 0",
+  borderBottom: "1px solid var(--border)",
+};
+const LABEL_STYLE: React.CSSProperties = {
+  color: "var(--muted)",
+  fontSize: 11,
+  width: 52,
+  flexShrink: 0,
+};
+const MONO_STYLE: React.CSSProperties = {
+  fontFamily: "ui-monospace, monospace",
+  fontSize: 11,
+  flex: 1,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+const MCP_BTN_STYLE: React.CSSProperties = {
+  padding: "2px 8px",
+  fontSize: 11,
+  background: "var(--card)",
+  border: "1px solid var(--border)",
+  borderRadius: 4,
+  color: "var(--text)",
+  cursor: "pointer",
+  flexShrink: 0,
+};
+
 function McpTab({
   settings,
   onSettingsChange,
@@ -70,64 +105,30 @@ function McpTab({
 
   useEffect(() => {
     invoke<McpStatus | null>("mcp_get_status").then(setStatus).catch(console.error);
-    const unsub = listen<{ url: string; token: string }>("mcp.ready", e => {
-      setStatus({ url: e.payload.url, bearer: e.payload.token });
-    });
-    return () => {
-      unsub.then(u => u());
-    };
   }, []);
 
-  const copy = (text: string, which: "url" | "token") => {
+  useTauriEvent<{ url: string; token: string }>("mcp.ready", useCallback((payload) => {
+    setStatus({ url: payload.url, bearer: payload.token });
+  }, []));
+
+  const copy = useCallback((text: string, which: "url" | "token") => {
     navigator.clipboard.writeText(text).then(() => {
       setCopied(which);
       setTimeout(() => setCopied(null), 1500);
     });
-  };
+  }, []);
 
-  const savePort = () => {
+  const savePort = useCallback(() => {
     const p = Math.max(0, Math.min(65535, parseInt(portInput, 10) || 0));
     const next = { ...settings, mcp_preferred_port: p };
     invoke("settings_set", { settings: next }).catch(console.error);
     onSettingsChange(next);
-  };
-
-  const rowStyle: React.CSSProperties = {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    padding: "6px 0",
-    borderBottom: "1px solid var(--border)",
-  };
-  const labelStyle: React.CSSProperties = {
-    color: "var(--muted)",
-    fontSize: 11,
-    width: 52,
-    flexShrink: 0,
-  };
-  const monoStyle: React.CSSProperties = {
-    fontFamily: "ui-monospace, monospace",
-    fontSize: 11,
-    flex: 1,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  };
-  const btnStyle: React.CSSProperties = {
-    padding: "2px 8px",
-    fontSize: 11,
-    background: "var(--card)",
-    border: "1px solid var(--border)",
-    borderRadius: 4,
-    color: "var(--text)",
-    cursor: "pointer",
-    flexShrink: 0,
-  };
+  }, [portInput, settings, onSettingsChange]);
 
   return (
     <div style={{ padding: "12px 0" }}>
-      <div style={rowStyle}>
-        <span style={labelStyle}>Status</span>
+      <div style={ROW_STYLE}>
+        <span style={LABEL_STYLE}>Status</span>
         {status ? (
           <span style={{ color: "var(--ok)", fontSize: 13 }}>● Connected</span>
         ) : (
@@ -135,28 +136,28 @@ function McpTab({
         )}
       </div>
 
-      <div style={rowStyle}>
-        <span style={labelStyle}>URL</span>
-        <span style={monoStyle}>{status?.url ?? "—"}</span>
+      <div style={ROW_STYLE}>
+        <span style={LABEL_STYLE}>URL</span>
+        <span style={MONO_STYLE}>{status?.url ?? "—"}</span>
         {status && (
-          <button style={btnStyle} onClick={() => copy(status.url, "url")}>
+          <button style={MCP_BTN_STYLE} onClick={() => copy(status.url, "url")}>
             {copied === "url" ? "✓" : "Copy"}
           </button>
         )}
       </div>
 
-      <div style={rowStyle}>
-        <span style={labelStyle}>Token</span>
-        <span style={monoStyle}>{status ? `${status.bearer.slice(0, 12)}…` : "—"}</span>
+      <div style={ROW_STYLE}>
+        <span style={LABEL_STYLE}>Token</span>
+        <span style={MONO_STYLE}>{status ? `${status.bearer.slice(0, 12)}…` : "—"}</span>
         {status && (
-          <button style={btnStyle} onClick={() => copy(status.bearer, "token")}>
+          <button style={MCP_BTN_STYLE} onClick={() => copy(status.bearer, "token")}>
             {copied === "token" ? "✓" : "Copy"}
           </button>
         )}
       </div>
 
-      <div style={{ ...rowStyle, borderBottom: "none", alignItems: "center" }}>
-        <span style={labelStyle}>Port*</span>
+      <div style={{ ...ROW_STYLE, borderBottom: "none", alignItems: "center" }}>
+        <span style={LABEL_STYLE}>Port*</span>
         <input
           type="number"
           min={0}
@@ -175,7 +176,7 @@ function McpTab({
             fontFamily: "ui-monospace, monospace",
           }}
         />
-        <button style={btnStyle} onClick={savePort}>
+        <button style={MCP_BTN_STYLE} onClick={savePort}>
           Save
         </button>
       </div>
@@ -211,29 +212,39 @@ function alertRelTime(iso: string): string {
 
 const EMPTY_FORM = { kind: "cost", threshold: "", level: "warning", message: "" };
 
+const FORM_INPUT_STYLE: React.CSSProperties = {
+  background: "var(--bg)",
+  border: "1px solid var(--border)",
+  borderRadius: 6,
+  padding: "4px 8px",
+  color: "var(--text)",
+  fontSize: 12,
+};
+
 function AlertsTab() {
   const [rules, setRules] = useState<AlertRule[]>([]);
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     try {
       const raw = await invoke<AlertRule[]>("alerts_list");
       setRules(raw ?? []);
-    } catch {}
-  }
+    } catch (err) {
+      console.error("[AlertsTab] refresh failed:", err);
+    }
+  }, []);
 
   useEffect(() => {
     refresh();
-    const u1 = listen("alerts.updated", () => refresh());
-    const u2 = listen("klaxon.created", () => refresh());
-    return () => {
-      u1.then(u => u());
-      u2.then(u => u());
-    };
-  }, []);
+  }, [refresh]);
 
-  async function createRule() {
+  useTauriEvents([
+    { event: "alerts.updated", handler: refresh },
+    { event: "klaxon.created", handler: refresh },
+  ]);
+
+  const createRule = useCallback(async () => {
     const thresh = parseFloat(form.threshold);
     if (isNaN(thresh)) return;
     if (!form.message.trim()) return;
@@ -246,10 +257,12 @@ function AlertsTab() {
       });
       setAdding(false);
       setForm(EMPTY_FORM);
-    } catch {}
-  }
+    } catch (err) {
+      console.error("[AlertsTab] createRule failed:", err);
+    }
+  }, [form]);
 
-  async function toggleEnabled(rule: AlertRule) {
+  const toggleEnabled = useCallback(async (rule: AlertRule) => {
     try {
       await invoke("alerts_update", {
         id: rule.id,
@@ -259,14 +272,18 @@ function AlertsTab() {
         message: rule.message,
         enabled: !rule.enabled,
       });
-    } catch {}
-  }
+    } catch (err) {
+      console.error("[AlertsTab] toggleEnabled failed:", err);
+    }
+  }, []);
 
-  async function deleteRule(id: number) {
+  const deleteRule = useCallback(async (id: number) => {
     try {
       await invoke("alerts_delete", { id });
-    } catch {}
-  }
+    } catch (err) {
+      console.error("[AlertsTab] deleteRule failed:", err);
+    }
+  }, []);
 
   return (
     <div style={{ padding: "12px 0" }}>
@@ -362,14 +379,7 @@ function AlertsTab() {
           <select
             value={form.kind}
             onChange={e => setForm(f => ({ ...f, kind: e.target.value }))}
-            style={{
-              background: "var(--bg)",
-              border: "1px solid var(--border)",
-              borderRadius: 6,
-              padding: "4px 8px",
-              color: "var(--text)",
-              fontSize: 12,
-            }}
+            style={FORM_INPUT_STYLE}
           >
             <option value="cost">Daily cost ($)</option>
             <option value="timer">Timer duration (hrs)</option>
@@ -382,28 +392,13 @@ function AlertsTab() {
               value={form.threshold}
               onChange={e => setForm(f => ({ ...f, threshold: e.target.value }))}
               placeholder={KIND_LABELS[form.kind] ?? "threshold"}
-              style={{
-                flex: 1,
-                background: "var(--bg)",
-                border: "1px solid var(--border)",
-                borderRadius: 6,
-                padding: "4px 8px",
-                color: "var(--text)",
-                fontSize: 12,
-              }}
+              style={{ ...FORM_INPUT_STYLE, flex: 1 }}
             />
           </div>
           <select
             value={form.level}
             onChange={e => setForm(f => ({ ...f, level: e.target.value }))}
-            style={{
-              background: "var(--bg)",
-              border: "1px solid var(--border)",
-              borderRadius: 6,
-              padding: "4px 8px",
-              color: "var(--text)",
-              fontSize: 12,
-            }}
+            style={FORM_INPUT_STYLE}
           >
             <option value="info">Info</option>
             <option value="warning">Warning</option>
@@ -414,14 +409,7 @@ function AlertsTab() {
             value={form.message}
             onChange={e => setForm(f => ({ ...f, message: e.target.value }))}
             placeholder="Alert message"
-            style={{
-              background: "var(--bg)",
-              border: "1px solid var(--border)",
-              borderRadius: 6,
-              padding: "4px 8px",
-              color: "var(--text)",
-              fontSize: 12,
-            }}
+            style={FORM_INPUT_STYLE}
           />
           <div style={{ display: "flex", gap: 6 }}>
             <button
@@ -493,28 +481,35 @@ export function SettingsWidget() {
     invoke<AppSettings>("settings_get").then(setSettings).catch(console.error);
   }, []);
 
-  const tabBtnStyle = (active: boolean): React.CSSProperties => ({
-    flex: 1,
-    padding: "6px 0",
-    fontSize: 12,
-    fontWeight: active ? 600 : 400,
-    background: active ? "var(--card)" : "transparent",
-    border: "none",
-    borderBottom: active ? "2px solid var(--info)" : "2px solid transparent",
-    color: active ? "var(--text)" : "var(--muted)",
-    cursor: "pointer",
-  });
+  const tabBtnStyle = useCallback(
+    (active: boolean): React.CSSProperties => ({
+      flex: 1,
+      padding: "6px 0",
+      fontSize: 12,
+      fontWeight: active ? 600 : 400,
+      background: active ? "var(--card)" : "transparent",
+      border: "none",
+      borderBottom: active ? "2px solid var(--info)" : "2px solid transparent",
+      color: active ? "var(--text)" : "var(--muted)",
+      cursor: "pointer",
+    }),
+    [],
+  );
+
+  const themeTabStyle = useMemo(() => tabBtnStyle(tab === "theme"), [tab, tabBtnStyle]);
+  const mcpTabStyle = useMemo(() => tabBtnStyle(tab === "mcp"), [tab, tabBtnStyle]);
+  const alertsTabStyle = useMemo(() => tabBtnStyle(tab === "alerts"), [tab, tabBtnStyle]);
 
   return (
     <DraggablePanel id="settings" title="Settings" width={360}>
       <div style={{ display: "flex", borderBottom: "1px solid var(--border)", marginBottom: 4 }}>
-        <button style={tabBtnStyle(tab === "theme")} onClick={() => setTab("theme")}>
+        <button style={themeTabStyle} onClick={() => setTab("theme")}>
           Theme
         </button>
-        <button style={tabBtnStyle(tab === "mcp")} onClick={() => setTab("mcp")}>
+        <button style={mcpTabStyle} onClick={() => setTab("mcp")}>
           MCP
         </button>
-        <button style={tabBtnStyle(tab === "alerts")} onClick={() => setTab("alerts")}>
+        <button style={alertsTabStyle} onClick={() => setTab("alerts")}>
           Alerts
         </button>
       </div>
