@@ -1091,29 +1091,31 @@ fn main() {
             }
 
             // --- Panel windows ---
-            let panels: &[(&str, f64, f64, f64, f64)] = &[
-                ("klaxon", 400.0, 560.0, 24.0, 24.0),
-                ("timer", 320.0, 380.0, 440.0, 24.0),
-                ("tokens", 400.0, 280.0, 780.0, 24.0),
-                ("settings", 360.0, 420.0, 1100.0, 24.0),
-                ("form", 480.0, 600.0, 200.0, 100.0),
-                ("history", 500.0, 620.0, 24.0, 610.0),
-                ("timer-report", 480.0, 420.0, 440.0, 430.0),
-                ("budget", 280.0, 360.0, 780.0, 320.0),
-                ("agents", 320.0, 400.0, 1100.0, 460.0),
-                ("session", 460.0, 300.0, 440.0, 430.0),
-                ("scratchpad", 360.0, 520.0, 1100.0, 610.0),
-                ("checkpoints", 440.0, 500.0, 440.0, 860.0),
-                ("logtail", 560.0, 500.0, 24.0, 1260.0),
-                ("toollog", 560.0, 500.0, 600.0, 1260.0),
-                ("queue", 560.0, 580.0, 600.0, 430.0),
+            //                    (label,         w,     h,    dx,     dy,  resizable)
+            let panels: &[(&str, f64, f64, f64, f64, bool)] = &[
+                ("klaxon",       400.0, 560.0,   24.0,   24.0, false),
+                ("timer",        320.0, 380.0,  440.0,   24.0, false),
+                ("tokens",       400.0, 280.0,  780.0,   24.0, false),
+                ("settings",     360.0, 420.0, 1100.0,   24.0, false),
+                ("form",         480.0, 600.0,  200.0,  100.0, false),
+                ("history",      500.0, 620.0,   24.0,  610.0, false),
+                ("timer-report", 480.0, 420.0,  440.0,  430.0, false),
+                ("budget",       280.0, 360.0,  780.0,  320.0, false),
+                ("agents",       320.0, 400.0, 1100.0,  460.0, false),
+                ("session",      460.0, 300.0,  440.0,  430.0, false),
+                ("scratchpad",   360.0, 520.0, 1100.0,  610.0, false),
+                ("checkpoints",  440.0, 500.0,  440.0,  860.0, false),
+                ("logtail",      560.0, 500.0,   24.0, 1260.0, false),
+                ("toollog",      560.0, 500.0,  600.0, 1260.0, false),
+                ("queue",        560.0, 580.0,  600.0,  430.0, false),
             ];
-            for &(label, w, h, dx, dy) in panels {
+            for &(label, w, h, dx, dy, resizable) in panels {
                 let url = tauri::WebviewUrl::App(format!("?panel={label}").into());
                 tauri::WebviewWindowBuilder::new(app.handle(), label, url)
                     .title(label)
                     .inner_size(w, h)
                     .position(dx, dy)
+                    .resizable(resizable)
                     .transparent(true)
                     .decorations(false)
                     .shadow(false)
