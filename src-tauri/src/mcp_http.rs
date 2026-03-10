@@ -18,6 +18,9 @@ use rand::{distributions::Alphanumeric, Rng};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, Mutex};
 
+/// Maximum number of requests allowed in a single JSON-RPC batch.
+const MAX_BATCH_SIZE: usize = 100;
+
 use crate::{
     checkpoint_store::CheckpointStore,
     logtail_store::LogTailStore,
@@ -224,7 +227,16 @@ async fn handle_post(
 
     let (reqs, is_batch) = match payload {
         JsonRpcPayload::One(r) => (vec![r], false),
-        JsonRpcPayload::Batch(v) => (v, true),
+        JsonRpcPayload::Batch(v) => {
+            if v.len() > MAX_BATCH_SIZE {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    format!("Batch too large: {} requests (max {MAX_BATCH_SIZE})", v.len()),
+                )
+                    .into_response();
+            }
+            (v, true)
+        }
     };
 
     // Gap 2: Session ID validation (skip for initialize requests)
@@ -334,10 +346,14 @@ async fn handle_post(
             .into_response();
 
         if let Some(sid) = new_session_id {
-            response.headers_mut().insert(
-                axum::http::HeaderName::from_static("mcp-session-id"),
-                axum::http::HeaderValue::from_str(&sid).unwrap(),
-            );
+            if let Ok(val) = axum::http::HeaderValue::from_str(&sid) {
+                response.headers_mut().insert(
+                    axum::http::HeaderName::from_static("mcp-session-id"),
+                    val,
+                );
+            } else {
+                eprintln!("[mcp] WARNING: session id contains invalid header characters: {sid}");
+            }
         }
         return response;
     }
@@ -356,10 +372,14 @@ async fn handle_post(
 
     // Gap 2: Set session ID header on response
     if let Some(sid) = new_session_id {
-        response.headers_mut().insert(
-            axum::http::HeaderName::from_static("mcp-session-id"),
-            axum::http::HeaderValue::from_str(&sid).unwrap(),
-        );
+        if let Ok(val) = axum::http::HeaderValue::from_str(&sid) {
+            response.headers_mut().insert(
+                axum::http::HeaderName::from_static("mcp-session-id"),
+                val,
+            );
+        } else {
+            eprintln!("[mcp] WARNING: session id contains invalid header characters: {sid}");
+        }
     }
 
     response
@@ -965,5 +985,392 @@ fn notification_to_jsonrpc(notif: &McpNotification) -> serde_json::Value {
         McpNotification::ToolLog => {
             jsonrpc_notification("notifications/toollog", serde_json::json!({"type":"updated"}))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::{header, HeaderMap, HeaderValue};
+
+    // -----------------------------------------------------------------------
+    // check_auth
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn check_auth_valid_bearer() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::AUTHORIZATION, HeaderValue::from_static("Bearer my_token"));
+        assert!(check_auth(&headers, "my_token"));
+    }
+
+    #[test]
+    fn check_auth_missing_header() {
+        let headers = HeaderMap::new();
+        assert!(!check_auth(&headers, "my_token"));
+    }
+
+    #[test]
+    fn check_auth_wrong_token() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::AUTHORIZATION, HeaderValue::from_static("Bearer wrong"));
+        assert!(!check_auth(&headers, "my_token"));
+    }
+
+    #[test]
+    fn check_auth_not_bearer_scheme() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::AUTHORIZATION, HeaderValue::from_static("Basic abc123"));
+        assert!(!check_auth(&headers, "abc123"));
+    }
+
+    #[test]
+    fn check_auth_with_whitespace_trimming() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::AUTHORIZATION, HeaderValue::from_static("Bearer my_token "));
+        assert!(check_auth(&headers, "my_token"));
+    }
+
+    // -----------------------------------------------------------------------
+    // check_origin
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn check_origin_absent_allows_non_browser_clients() {
+        let headers = HeaderMap::new();
+        assert!(check_origin(&headers));
+    }
+
+    #[test]
+    fn check_origin_localhost() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::ORIGIN, HeaderValue::from_static("http://localhost"));
+        assert!(check_origin(&headers));
+    }
+
+    #[test]
+    fn check_origin_localhost_with_port() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::ORIGIN, HeaderValue::from_static("http://localhost:5173"));
+        assert!(check_origin(&headers));
+    }
+
+    #[test]
+    fn check_origin_127_0_0_1() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::ORIGIN, HeaderValue::from_static("http://127.0.0.1"));
+        assert!(check_origin(&headers));
+    }
+
+    #[test]
+    fn check_origin_127_0_0_1_with_port() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::ORIGIN, HeaderValue::from_static("http://127.0.0.1:3000"));
+        assert!(check_origin(&headers));
+    }
+
+    #[test]
+    fn check_origin_rejects_external_origin() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::ORIGIN, HeaderValue::from_static("https://evil.com"));
+        assert!(!check_origin(&headers));
+    }
+
+    #[test]
+    fn check_origin_rejects_https_localhost() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::ORIGIN, HeaderValue::from_static("https://localhost"));
+        assert!(!check_origin(&headers));
+    }
+
+    // -----------------------------------------------------------------------
+    // generate_session_id / generate_bearer
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn generate_session_id_has_correct_prefix_and_length() {
+        let sid = generate_session_id();
+        assert!(sid.starts_with("ses_"), "session id should start with 'ses_': {sid}");
+        // ses_ (4) + 32 alphanumeric = 36 total
+        assert_eq!(sid.len(), 36, "session id should be 36 chars: {sid}");
+    }
+
+    #[test]
+    fn generate_session_id_is_valid_header_value() {
+        let sid = generate_session_id();
+        assert!(
+            HeaderValue::from_str(&sid).is_ok(),
+            "session id should be a valid header value: {sid}"
+        );
+    }
+
+    #[test]
+    fn generate_session_id_is_unique() {
+        let a = generate_session_id();
+        let b = generate_session_id();
+        assert_ne!(a, b, "two session ids should differ");
+    }
+
+    #[test]
+    fn generate_bearer_has_correct_prefix_and_length() {
+        let bearer = generate_bearer();
+        assert!(bearer.starts_with("mcp_"), "bearer should start with 'mcp_': {bearer}");
+        // mcp_ (4) + 28 alphanumeric = 32 total
+        assert_eq!(bearer.len(), 32, "bearer should be 32 chars: {bearer}");
+    }
+
+    #[test]
+    fn generate_bearer_is_unique() {
+        let a = generate_bearer();
+        let b = generate_bearer();
+        assert_ne!(a, b, "two bearers should differ");
+    }
+
+    // -----------------------------------------------------------------------
+    // parse_level
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_level_valid_values() {
+        let cases = [
+            ("info", KlaxonLevel::Info),
+            ("warning", KlaxonLevel::Warning),
+            ("error", KlaxonLevel::Error),
+            ("success", KlaxonLevel::Success),
+        ];
+        for (input, expected) in cases {
+            let val = serde_json::Value::String(input.to_string());
+            let result = parse_level(&val).unwrap();
+            // Compare via serialization since KlaxonLevel doesn't impl PartialEq
+            assert_eq!(
+                serde_json::to_string(&result).unwrap(),
+                serde_json::to_string(&expected).unwrap(),
+                "parse_level({input})"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_level_invalid_string() {
+        let val = serde_json::Value::String("critical".into());
+        assert!(parse_level(&val).is_err());
+    }
+
+    #[test]
+    fn parse_level_non_string() {
+        let val = serde_json::json!(42);
+        assert!(parse_level(&val).is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // parse_notify_args
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_notify_args_valid() {
+        let args = serde_json::json!({
+            "level": "warning",
+            "title": "Test Title",
+            "message": "Test Message"
+        });
+        let (level, title, message, ttl_ms, actions) = parse_notify_args(&args).unwrap();
+        assert_eq!(serde_json::to_value(&level).unwrap(), "warning");
+        assert_eq!(title, "Test Title");
+        assert_eq!(message, "Test Message");
+        assert!(ttl_ms.is_none());
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn parse_notify_args_with_ttl() {
+        let args = serde_json::json!({
+            "level": "info",
+            "title": "T",
+            "message": "M",
+            "ttl_ms": 5000
+        });
+        let (_, _, _, ttl_ms, _) = parse_notify_args(&args).unwrap();
+        assert_eq!(ttl_ms, Some(5000));
+    }
+
+    #[test]
+    fn parse_notify_args_with_actions() {
+        let args = serde_json::json!({
+            "level": "info",
+            "title": "T",
+            "message": "M",
+            "actions": [
+                {"kind": "open_url", "id": "a1", "label": "Open", "url": "http://example.com"}
+            ]
+        });
+        let (_, _, _, _, actions) = parse_notify_args(&args).unwrap();
+        assert_eq!(actions.len(), 1);
+    }
+
+    #[test]
+    fn parse_notify_args_missing_level() {
+        let args = serde_json::json!({"title": "T", "message": "M"});
+        assert!(parse_notify_args(&args).is_err());
+    }
+
+    #[test]
+    fn parse_notify_args_missing_title() {
+        let args = serde_json::json!({"level": "info", "message": "M"});
+        assert!(parse_notify_args(&args).is_err());
+    }
+
+    #[test]
+    fn parse_notify_args_missing_message() {
+        let args = serde_json::json!({"level": "info", "title": "T"});
+        assert!(parse_notify_args(&args).is_err());
+    }
+
+    #[test]
+    fn parse_notify_args_invalid_actions_skipped() {
+        let args = serde_json::json!({
+            "level": "info",
+            "title": "T",
+            "message": "M",
+            "actions": [{"not_valid": true}, {"kind": "ack", "id": "a1", "label": "OK"}]
+        });
+        let (_, _, _, _, actions) = parse_notify_args(&args).unwrap();
+        // Invalid action silently filtered out, valid one kept
+        assert_eq!(actions.len(), 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // parse_ask_args
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_ask_args_valid() {
+        let args = serde_json::json!({
+            "level": "info",
+            "title": "Question",
+            "message": "Please answer",
+            "form": {
+                "id": "f1",
+                "title": "Survey",
+                "fields": [{"type": "text", "id": "name", "label": "Name"}]
+            }
+        });
+        let (level, title, message, form, ttl_ms) = parse_ask_args(&args).unwrap();
+        assert_eq!(serde_json::to_value(&level).unwrap(), "info");
+        assert_eq!(title, "Question");
+        assert_eq!(message, "Please answer");
+        assert_eq!(form.id, "f1");
+        assert_eq!(form.fields.len(), 1);
+        assert!(ttl_ms.is_none());
+    }
+
+    #[test]
+    fn parse_ask_args_missing_form() {
+        let args = serde_json::json!({"level": "info", "title": "T", "message": "M"});
+        assert!(parse_ask_args(&args).is_err());
+    }
+
+    #[test]
+    fn parse_ask_args_invalid_form_structure() {
+        let args = serde_json::json!({
+            "level": "info",
+            "title": "T",
+            "message": "M",
+            "form": "not an object"
+        });
+        assert!(parse_ask_args(&args).is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // err / ok helpers
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn err_response_structure() {
+        let response = err(serde_json::json!(1), -32600, "Invalid request");
+        assert_eq!(response.jsonrpc, "2.0");
+        assert_eq!(response.id, serde_json::json!(1));
+        assert!(response.result.is_none());
+        let e = response.error.unwrap();
+        assert_eq!(e.code, -32600);
+        assert_eq!(e.message, "Invalid request");
+    }
+
+    #[test]
+    fn ok_response_structure() {
+        let response = ok(serde_json::json!(42), serde_json::json!({"status": "done"}));
+        assert_eq!(response.jsonrpc, "2.0");
+        assert_eq!(response.id, serde_json::json!(42));
+        assert!(response.error.is_none());
+        assert_eq!(response.result.unwrap(), serde_json::json!({"status": "done"}));
+    }
+
+    // -----------------------------------------------------------------------
+    // MAX_BATCH_SIZE constant
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn max_batch_size_is_reasonable() {
+        assert!(MAX_BATCH_SIZE > 0);
+        assert!(MAX_BATCH_SIZE <= 1000);
+    }
+
+    // -----------------------------------------------------------------------
+    // jsonrpc_notification
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn jsonrpc_notification_structure() {
+        let notif = jsonrpc_notification("test/method", serde_json::json!({"key": "value"}));
+        assert_eq!(notif["jsonrpc"], "2.0");
+        assert_eq!(notif["method"], "test/method");
+        assert_eq!(notif["params"]["key"], "value");
+        assert!(notif.get("id").is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // JsonRpcPayload deserialization
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn jsonrpc_payload_single() {
+        let json = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "test", "params": {}
+        });
+        let payload: JsonRpcPayload = serde_json::from_value(json).unwrap();
+        match payload {
+            JsonRpcPayload::One(r) => assert_eq!(r.method, "test"),
+            JsonRpcPayload::Batch(_) => panic!("expected One, got Batch"),
+        }
+    }
+
+    #[test]
+    fn jsonrpc_payload_batch() {
+        let json = serde_json::json!([
+            {"jsonrpc": "2.0", "id": 1, "method": "a", "params": {}},
+            {"jsonrpc": "2.0", "id": 2, "method": "b", "params": {}}
+        ]);
+        let payload: JsonRpcPayload = serde_json::from_value(json).unwrap();
+        match payload {
+            JsonRpcPayload::Batch(v) => {
+                assert_eq!(v.len(), 2);
+                assert_eq!(v[0].method, "a");
+                assert_eq!(v[1].method, "b");
+            }
+            JsonRpcPayload::One(_) => panic!("expected Batch, got One"),
+        }
+    }
+
+    #[test]
+    fn jsonrpc_request_defaults_params_to_null() {
+        let json = serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "test"});
+        let req: JsonRpcRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.params, serde_json::Value::Null);
+    }
+
+    #[test]
+    fn jsonrpc_request_notification_has_no_id() {
+        let json = serde_json::json!({"jsonrpc": "2.0", "method": "notifications/test", "params": {}});
+        let req: JsonRpcRequest = serde_json::from_value(json).unwrap();
+        assert!(req.id.is_none());
     }
 }

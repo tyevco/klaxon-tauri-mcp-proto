@@ -40,14 +40,20 @@ fn row_to_item(row: &sqlx::sqlite::SqliteRow) -> KlaxonItem {
     let response_json: Option<String> = row.try_get("response").unwrap_or(None);
     let answered_at_str: Option<String> = row.try_get("answered_at").unwrap_or(None);
 
-    let id = Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::new_v4());
+    let id = Uuid::parse_str(&id_str).unwrap_or_else(|e| {
+        eprintln!("[store] WARNING: corrupt UUID in database row '{}': {e}, generating replacement", id_str);
+        Uuid::new_v4()
+    });
     let level: KlaxonLevel =
         serde_json::from_value(serde_json::Value::String(level_str)).unwrap_or_default();
     let status: KlaxonStatus =
         serde_json::from_value(serde_json::Value::String(status_str)).unwrap_or(KlaxonStatus::Open);
     let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
         .map(|d| d.with_timezone(&Utc))
-        .unwrap_or_else(|_| Utc::now());
+        .unwrap_or_else(|e| {
+            eprintln!("[store] WARNING: invalid created_at '{}' for item {}: {e}, using now()", created_at_str, id);
+            Utc::now()
+        });
     let form: Option<KlaxonForm> = form_json.as_deref().and_then(|s| serde_json::from_str(s).ok());
     let actions: Vec<KlaxonAction> =
         actions_json.as_deref().and_then(|s| serde_json::from_str(s).ok()).unwrap_or_default();
@@ -80,13 +86,15 @@ impl KlaxonStore {
 
     pub async fn list_open(&self) -> Vec<KlaxonItem> {
         // Expire items whose TTL has elapsed
-        let _ = sqlx::query(
+        if let Err(e) = sqlx::query(
       "UPDATE klaxon_items SET status = 'expired' \
        WHERE status = 'open' AND ttl_ms IS NOT NULL \
        AND (CAST(strftime('%s', 'now') AS INTEGER) - CAST(strftime('%s', created_at) AS INTEGER)) * 1000 >= ttl_ms"
     )
     .execute(&self.pool)
-    .await;
+    .await {
+            eprintln!("[store] WARNING: TTL expiry query failed: {e}");
+        }
 
         sqlx::query("SELECT * FROM klaxon_items WHERE status = 'open' ORDER BY created_at ASC")
             .fetch_all(&self.pool)
@@ -97,13 +105,15 @@ impl KlaxonStore {
 
     pub async fn list_all(&self, limit: i64, offset: i64) -> Vec<KlaxonItem> {
         // Expire items whose TTL has elapsed
-        let _ = sqlx::query(
+        if let Err(e) = sqlx::query(
       "UPDATE klaxon_items SET status = 'expired' \
        WHERE status = 'open' AND ttl_ms IS NOT NULL \
        AND (CAST(strftime('%s', 'now') AS INTEGER) - CAST(strftime('%s', created_at) AS INTEGER)) * 1000 >= ttl_ms"
     )
     .execute(&self.pool)
-    .await;
+    .await {
+            eprintln!("[store] WARNING: TTL expiry query failed: {e}");
+        }
 
         sqlx::query("SELECT * FROM klaxon_items ORDER BY created_at DESC LIMIT ? OFFSET ?")
             .bind(limit)
@@ -157,7 +167,7 @@ impl KlaxonStore {
         let actions = vec![KlaxonAction::Ack { id: "ack".into(), label: "Acknowledge".into() }];
         let actions_json = serde_json::to_string(&actions).unwrap_or_else(|_| "[]".into());
 
-        let _ = sqlx::query(
+        if let Err(e) = sqlx::query(
       "INSERT INTO klaxon_items (id, level, title, message, created_at, ttl_ms, status, actions) \
        VALUES (?, ?, ?, ?, ?, ?, 'open', ?)",
     )
@@ -169,7 +179,9 @@ impl KlaxonStore {
     .bind(ttl_ms.map(|v| v as i64))
     .bind(&actions_json)
     .execute(&self.pool)
-    .await;
+    .await {
+            eprintln!("[store] ERROR: failed to insert notification {id}: {e}");
+        }
 
         let item = KlaxonItem {
             id,
@@ -200,7 +212,7 @@ impl KlaxonStore {
         let now = Utc::now();
         let form_json = serde_json::to_string(&form).unwrap_or_default();
 
-        let _ = sqlx::query(
+        if let Err(e) = sqlx::query(
       "INSERT INTO klaxon_items (id, level, title, message, created_at, ttl_ms, status, form, actions) \
        VALUES (?, ?, ?, ?, ?, ?, 'open', ?, '[]')",
     )
@@ -212,7 +224,9 @@ impl KlaxonStore {
     .bind(ttl_ms.map(|v| v as i64))
     .bind(&form_json)
     .execute(&self.pool)
-    .await;
+    .await {
+            eprintln!("[store] ERROR: failed to insert ask item {id}: {e}");
+        }
 
         let item = KlaxonItem {
             id,
@@ -234,10 +248,13 @@ impl KlaxonStore {
     pub async fn ack(&self, id: Uuid) -> Option<KlaxonItem> {
         let item = self.get_item(id).await?;
         if item.form.is_none() {
-            let _ = sqlx::query("UPDATE klaxon_items SET status = 'dismissed' WHERE id = ?")
+            if let Err(e) = sqlx::query("UPDATE klaxon_items SET status = 'dismissed' WHERE id = ?")
                 .bind(id.to_string())
                 .execute(&self.pool)
-                .await;
+                .await
+            {
+                eprintln!("[store] ERROR: failed to ack item {id}: {e}");
+            }
         }
         let updated = self.get_item(id).await?;
         let _ = self.events.send(StoreEvent::Updated(updated.clone()));
@@ -245,10 +262,13 @@ impl KlaxonStore {
     }
 
     pub async fn dismiss(&self, id: Uuid) -> Option<KlaxonItem> {
-        let _ = sqlx::query("UPDATE klaxon_items SET status = 'dismissed' WHERE id = ?")
+        if let Err(e) = sqlx::query("UPDATE klaxon_items SET status = 'dismissed' WHERE id = ?")
             .bind(id.to_string())
             .execute(&self.pool)
-            .await;
+            .await
+        {
+            eprintln!("[store] ERROR: failed to dismiss item {id}: {e}");
+        }
         let updated = self.get_item(id).await?;
         let _ = self.events.send(StoreEvent::Updated(updated.clone()));
         Some(updated)
@@ -268,18 +288,72 @@ impl KlaxonStore {
     pub async fn answer(&self, id: Uuid, response: serde_json::Value) -> Option<KlaxonItem> {
         let response_json = serde_json::to_string(&response).ok()?;
         let now = Utc::now().to_rfc3339();
-        let _ = sqlx::query(
+        if let Err(e) = sqlx::query(
       "UPDATE klaxon_items SET status = 'answered', response = ?, answered_at = ? WHERE id = ?",
     )
     .bind(&response_json)
     .bind(&now)
     .bind(id.to_string())
     .execute(&self.pool)
-    .await;
+    .await {
+            eprintln!("[store] ERROR: failed to answer item {id}: {e}");
+        }
 
         let _ = self.events.send(StoreEvent::Answered { id, response });
         let updated = self.get_item(id).await?;
         let _ = self.events.send(StoreEvent::Updated(updated.clone()));
         Some(updated)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn level_str_maps_all_variants() {
+        assert_eq!(level_str(&KlaxonLevel::Info), "info");
+        assert_eq!(level_str(&KlaxonLevel::Warning), "warning");
+        assert_eq!(level_str(&KlaxonLevel::Error), "error");
+        assert_eq!(level_str(&KlaxonLevel::Success), "success");
+    }
+
+    #[test]
+    fn store_event_created_is_clone() {
+        let item = KlaxonItem {
+            id: Uuid::new_v4(),
+            level: KlaxonLevel::Info,
+            title: "Test".into(),
+            message: "msg".into(),
+            created_at: Utc::now(),
+            ttl_ms: None,
+            status: KlaxonStatus::Open,
+            form: None,
+            actions: vec![],
+            response: None,
+            answered_at: None,
+        };
+        let event = StoreEvent::Created(item.clone());
+        let cloned = event.clone();
+        match (event, cloned) {
+            (StoreEvent::Created(a), StoreEvent::Created(b)) => {
+                assert_eq!(a.id, b.id);
+            }
+            _ => panic!("clone should preserve variant"),
+        }
+    }
+
+    #[test]
+    fn store_event_answered_holds_correct_data() {
+        let id = Uuid::new_v4();
+        let response = serde_json::json!({"answer": "yes"});
+        let event = StoreEvent::Answered { id, response: response.clone() };
+        match event {
+            StoreEvent::Answered { id: eid, response: eresp } => {
+                assert_eq!(eid, id);
+                assert_eq!(eresp, response);
+            }
+            _ => panic!("expected Answered"),
+        }
     }
 }
