@@ -26,5 +26,10 @@
     },
     "macOSPrivateApi": true,
     "windows": []
+  },
+  "plugins": {
+    "notification": {
+      "all": true
+    }
   }
 }

@@ -809,6 +809,7 @@ fn update_tray_tooltip(app: &tauri::AppHandle, count: usize) {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let data_dir = app
                 .handle()
@@ -887,6 +888,16 @@ fn main() {
                             let _ = app_handle.emit("klaxon.created", &item);
                             let count = open_count_klaxon.fetch_add(1, Ordering::Relaxed) + 1;
                             update_tray_tooltip(&app_handle, count);
+                            // OS-level notification
+                            use tauri_plugin_notification::NotificationExt;
+                            let mut notif = app_handle
+                                .notification()
+                                .builder()
+                                .title(&item.title);
+                            if let Some(ref msg) = item.message {
+                                notif = notif.body(msg);
+                            }
+                            let _ = notif.show();
                         }
                         Ok(StoreEvent::Updated(item)) => {
                             let _ = app_handle.emit("klaxon.updated", &item);
