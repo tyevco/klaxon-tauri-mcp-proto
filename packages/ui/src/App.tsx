@@ -21,16 +21,35 @@ import { QueueWidget } from "./widgets/QueueWidget";
 export function App() {
   useEffect(() => {
     if (typeof (window as any).__TAURI_INTERNALS__ === "undefined") return;
-    invoke<AppSettings>("settings_get")
-      .then(s => {
-        document.documentElement.dataset.theme = s.theme;
-      })
-      .catch(() => {});
+
+    const applyTheme = () => {
+      invoke<AppSettings>("settings_get")
+        .then(s => {
+          document.documentElement.dataset.theme = s.theme;
+        })
+        .catch(() => {});
+    };
+
+    // Apply theme on initial load
+    applyTheme();
+
+    // Listen for theme changes broadcast from the settings panel
     const unsub = listen<AppSettings>("settings.changed", e => {
       document.documentElement.dataset.theme = e.payload.theme;
     });
+
+    // Re-apply theme when a hidden panel becomes visible again,
+    // in case the event was missed while the webview was hidden
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        applyTheme();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
     return () => {
       unsub.then(u => u());
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, []);
 
