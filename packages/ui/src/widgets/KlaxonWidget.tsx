@@ -75,19 +75,11 @@ export function KlaxonWidget() {
   }, []);
 
   useEffect(() => {
-    if (typeof Notification !== "undefined" && Notification.permission === "default") {
-      Notification.requestPermission();
-    }
     refresh();
   }, [refresh]);
 
   useTauriEvent("klaxon.updated", refresh);
-  useTauriEvent<KlaxonItem>("klaxon.created", useCallback((payload) => {
-    refresh();
-    if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-      new Notification(payload.title, { body: payload.message });
-    }
-  }, [refresh]));
+  useTauriEvent("klaxon.created", refresh);
 
   return (
     <DraggablePanel id="klaxon" title="Klaxon" width={380}>
